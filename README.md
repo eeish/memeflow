@@ -1,309 +1,229 @@
-# Sui Todo DApp
+# MemeFlow - Social Token Trading Platform
 
-A full-stack decentralized todo application built on the Sui blockchain using React, TypeScript, and Move smart contracts.
+A comprehensive social trading platform built on React 19 and TypeScript, designed for meme token communities and social finance.
 
-## 🚀 Features
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/your-username/memeflow)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-19-blue.svg)](https://reactjs.org/)
+[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-3.4-38B2AC.svg)](https://tailwindcss.com/)
 
-- ✅ Create and manage todo lists on-chain
-- ✅ Add tasks with titles and descriptions
-- ✅ Mark tasks as completed
-- ✅ Real-time updates via blockchain events
-- ✅ Responsive design for mobile and desktop
-- ✅ TypeScript for type safety
-- ✅ Modern React patterns with hooks
+## ✨ Features
 
-## 🛠 Tech Stack
+### 🎭 Social Trading Platform
+- **Username → Token**: Automatic token creation for each user
+- **Social Feed**: Real-time posts, likes, comments, and token mentions
+- **Token Market**: Live token dashboard with pricing, holders, and market data
+- **Search & Discovery**: Find tokens, users, and trending hashtags
 
-- **Frontend**: React 19, TypeScript, Vite
-- **Blockchain**: Sui Network, Move language
-- **State Management**: React Query (@tanstack/react-query)
-- **Wallet Integration**: Mysten Labs dApp Kit
-- **Styling**: CSS3 with modern features
-- **Development**: ESLint, Prettier, Node.js scripts
+### 👤 User Experience
+- **Profile Management**: Personal profiles with token portfolios and social stats
+- **Notifications**: Real-time activity feed with categorized updates
+- **Authentication**: Secure sign-up/sign-in with persistent sessions
+- **Responsive Design**: Mobile-first approach with glass morphism UI
 
-## 📋 Prerequisites
+### ⚡ Modern Tech Stack
+- **Frontend**: React 19 + TypeScript + Vite
+- **UI Components**: Comprehensive shadcn/ui library with 40+ components
+- **Styling**: Tailwind CSS with custom design system and animations
+- **Blockchain Ready**: Sui Network integration for future token trading
 
-Before you begin, ensure you have the following installed:
+## 🚀 Quick Start
 
-- [Node.js](https://nodejs.org/) (v18 or higher)
-- [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/)
-- [Sui CLI](https://docs.sui.io/guides/developer/getting-started/sui-install) for contract deployment
-- A Sui wallet (recommended: [Sui Wallet](https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbobppdil))
+### Prerequisites
+- Node.js 18+ 
+- npm or yarn
+- Git
 
-## 🏗 Quick Start
-
-### Option A: Local Development (Fastest)
-
-```bash
-# 1. Clone and setup
-git clone <your-repo-url>
-cd vite-project
-npm run setup
-
-# 2. Start local Sui network
-npm run local:start
-
-# 3. Deploy and start development (one command!)
-npm run start:local
-```
-
-### Option B: Testnet Development
+### Installation
 
 ```bash
-# 1. Clone and setup
-git clone <your-repo-url>
-cd vite-project
-npm run setup
+# Clone the repository
+git clone https://github.com/your-username/memeflow.git
+cd memeflow
 
-# 2. Configure environment (optional)
-# Edit .env.local if you want to customize settings
+# Install dependencies
+npm install
 
-# 3. Deploy to testnet and start development
-npm run start
-```
-
-### Manual Setup
-
-If you prefer step-by-step setup:
-
-#### 1. Clone and Setup
-```bash
-git clone <your-repo-url>
-cd vite-project
-npm run setup  # Installs dependencies and creates .env.local
-```
-
-#### 2. Choose Your Network
-
-**For Local Development:**
-```bash
-npm run local:start          # Start local Sui network
-npm run deploy:local         # Deploy contracts locally
-```
-
-**For Testnet Development:**
-```bash
-npm run deploy:testnet       # Deploy to Sui testnet
-```
-
-**For Other Networks:**
-```bash
-npm run deploy:mainnet       # Deploy to mainnet (requires real SUI)
-npm run deploy:devnet        # Deploy to devnet
-```
-
-#### 3. Start Development Server
-```bash
+# Start development server
 npm run dev
 ```
 
-Visit [http://localhost:5173](http://localhost:5173) to see your dApp!
+Visit [http://localhost:5173](http://localhost:5173) to see the application.
 
-The deploy script automatically:
-- Builds the Move contract
-- Deploys to the specified network
-- Updates your `.env.local` with the Package ID
-- Requests SUI tokens if needed (testnet/local)
+## 🛠 Development Commands
 
-## 📝 Available Scripts
+```bash
+# Development
+npm run dev          # Start development server with HMR
+npm run build        # Build for production
+npm run preview      # Preview production build
+npm run lint         # Run ESLint
+npm run typecheck    # Run TypeScript checks
 
-### Development
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build
-- `npm run start` - Deploy to testnet and start dev server
+# Blockchain (Future)
+npm run contract:build    # Build Move smart contracts
+npm run contract:test     # Test smart contracts
+npm run deploy:testnet    # Deploy to Sui testnet
+```
 
-### Smart Contracts
-- `npm run contract:build` - Build Move contracts
-- `npm run contract:test` - Run contract tests
-- `npm run contract:fmt` - Format Move code
-- `npm run contract:clean` - Clean build artifacts
-
-### Deployment
-- `npm run deploy` - Deploy to default network (testnet)
-- `npm run deploy:local` - Deploy to local Sui network
-- `npm run deploy:testnet` - Deploy to Sui testnet
-- `npm run deploy:mainnet` - Deploy to Sui mainnet
-- `npm run deploy:devnet` - Deploy to Sui devnet
-
-### Code Quality
-- `npm run lint` - Run ESLint
-- `npm run typecheck` - Run TypeScript checks
-- `npm run format` - Format code with Prettier
-- `npm run format:check` - Check code formatting
-- `npm run test` - Run all tests (contract + linting + typecheck)
-- `npm run ci` - Run CI pipeline (test + build)
-
-### Utilities
-- `npm run setup` - Install dependencies and setup environment
-- `npm run clean` - Clean all build artifacts
-
-### Local Network
-- `npm run local:start` - Start local Sui network with faucet
-- `npm run local:stop` - Stop local Sui network
-- `npm run start:local` - Start local network, deploy contracts, and run dev server
-
-## 🏗 Project Structure
+## 📁 Project Structure
 
 ```
-vite-project/
-├── contracts/todo/          # Move smart contracts
-│   ├── sources/
-│   │   └── todo.move       # Main contract file
-│   ├── tests/
-│   │   └── todo_tests.move # Contract tests
-│   └── Move.toml           # Contract configuration
-├── scripts/
-│   ├── deploy.js           # Deployment script
-│   └── test-contract.js    # Contract testing script
+memeflow/
 ├── src/
-│   ├── components/
-│   │   └── TodoApp.tsx     # Main todo component
-│   ├── App.tsx             # Root application component
-│   ├── main.tsx            # Application entry point
-│   └── App.css             # Styling
-├── .env.example            # Environment template
-├── .prettierrc             # Prettier configuration
+│   ├── components/           # React components
+│   │   ├── ui/              # shadcn/ui component library
+│   │   ├── AuthProvider.tsx # Authentication system
+│   │   ├── SocialFeed.tsx   # Main social feed
+│   │   ├── TokenDashboard.tsx # Token market interface
+│   │   ├── Profile.tsx      # User profiles
+│   │   ├── SearchPage.tsx   # Search functionality
+│   │   └── Notifications.tsx # Activity notifications
+│   ├── lib/                 # Utility functions
+│   ├── App.tsx              # Main application component
+│   ├── main.tsx             # Application entry point
+│   └── index.css            # Global styles with design system
+├── contracts/               # Sui Move smart contracts (future)
+├── public/                  # Static assets
+├── tailwind.config.js       # Tailwind CSS configuration
+├── vite.config.ts          # Vite configuration
 └── package.json            # Dependencies and scripts
 ```
 
-## 📱 Usage
+## 🎨 Design System
 
-1. **Connect Wallet**: Click "Connect Wallet" and select your Sui wallet
-2. **Create Todo List**: Click "Create Todo List" to initialize your on-chain todo list
-3. **Add Tasks**: Fill in the title and description, then click "Add Task"
-4. **Complete Tasks**: Click the "✓ Complete" button on any pending task
-5. **View History**: All tasks persist on-chain and are visible across sessions
+### Color Palette
+- **Cyber Pink**: `#ff0080` - Primary brand color
+- **Electric Blue**: `#00ffff` - Accent and highlights  
+- **Neon Green**: `#39ff14` - Success states
+- **Holographic Purple**: `#8a2be2` - Secondary actions
+- **Void Black**: `#0a0a0f` - Background base
+
+### Components
+- **Glass Morphism**: Translucent cards with backdrop blur
+- **Gradient Animations**: Dynamic holographic effects
+- **Floating Elements**: Subtle animations and hover states
+- **Responsive Grid**: Mobile-first responsive layouts
 
 ## 🔧 Configuration
 
 ### Environment Variables
+Create a `.env.local` file in the root directory:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `VITE_PACKAGE_ID` | Deployed contract package ID | `YOUR_PACKAGE_ID_HERE` |
-| `VITE_NETWORK` | Target Sui network | `testnet` |
-| `VITE_LOCAL_RPC` | Custom local RPC URL | `http://127.0.0.1:9000` |
-| `VITE_TESTNET_RPC` | Custom testnet RPC URL | Sui default |
-| `VITE_MAINNET_RPC` | Custom mainnet RPC URL | Sui default |
-| `VITE_DEVNET_RPC` | Custom devnet RPC URL | Sui default |
+```env
+# Application
+VITE_APP_NAME=MemeFlow
+VITE_APP_VERSION=1.0.0
 
-### Network Configuration
+# Network Configuration (Future Blockchain Integration)
+VITE_NETWORK=testnet
+VITE_PACKAGE_ID=YOUR_PACKAGE_ID_HERE
+VITE_TESTNET_RPC=https://fullnode.testnet.sui.io:443
+VITE_LOCAL_RPC=http://127.0.0.1:9000
 
-The app automatically configures the correct RPC endpoints for each network. You can override these by setting custom RPC URLs in your environment variables.
+# API Configuration (Future)
+VITE_API_BASE_URL=https://api.memeflow.io
+```
 
 ## 🧪 Testing
 
-### Smart Contract Tests
-
 ```bash
-npm run contract:test
-```
+# Run all tests
+npm run test
 
-Tests are written in Move and located in `contracts/todo/tests/`. They verify:
-- Todo list creation
-- Task creation and management
-- Access control and ownership
-- Event emission
+# Type checking
+npm run typecheck
 
-### Frontend Tests
+# Linting
+npm run lint
 
-```bash
-npm run typecheck  # TypeScript validation
-npm run lint       # ESLint checks
-npm run test       # All tests combined
+# Build verification
+npm run build
 ```
 
 ## 🚀 Deployment
 
-### Testnet Deployment (Recommended)
+### Vercel (Recommended)
+1. Fork this repository
+2. Connect to Vercel
+3. Deploy automatically on push
 
+### Manual Build
 ```bash
-npm run deploy:testnet
+npm run build
+# Deploy the `dist/` folder to your hosting provider
 ```
 
-### Mainnet Deployment
-
-```bash
-npm run deploy:mainnet
+### Docker
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+EXPOSE 5173
+CMD ["npm", "run", "preview"]
 ```
-
-**Important**: Mainnet deployment requires real SUI tokens. Make sure you have sufficient balance for gas fees.
-
-### Deployment Process
-
-The deployment script:
-1. Validates prerequisites (Sui CLI, wallet setup)
-2. Builds the Move contract with optimizations
-3. Deploys to the specified network
-4. Extracts and saves the Package ID
-5. Updates environment variables automatically
-6. Provides deployment summary and next steps
-
-## 🔍 Troubleshooting
-
-### Common Issues
-
-**"Package ID not configured"**
-- Run `npm run deploy:testnet` to deploy and configure automatically
-- Or manually set `VITE_PACKAGE_ID` in `.env.local`
-
-**"Wallet not connected"**
-- Install a Sui wallet extension
-- Make sure you're connected to the correct network
-- Check if you have sufficient SUI balance
-
-**"Failed to build contract"**
-- Ensure Sui CLI is installed and updated
-- Check that `contracts/todo/` directory exists
-- Verify Move.toml configuration
-
-**"RPC connection failed"**
-- Check your internet connection
-- Verify the network configuration
-- Try using a different RPC endpoint
-
-**"Local network not running"**
-- Start the local network: `npm run local:start`
-- Or manually: `sui start --with-faucet`
-- Check if port 9000 is already in use
-- Verify Sui CLI is properly installed
-
-**"Local deployment fails"**
-- Ensure local network is running first
-- Check that you have SUI balance: `sui client balance`
-- Request local tokens: `sui client faucet`
-- Verify you're on the local environment: `sui client active-env`
-
-**"Chain identifier error" or "Invalid Sui chain identifier"**
-- This can occur with local networks due to wallet compatibility
-- Try using testnet for wallet interactions: `npm run deploy:testnet`
-- Local networks may have limited wallet support
-- Ensure you're using a compatible Sui wallet version
-
-### Getting Help
-
-1. Check the [Sui Documentation](https://docs.sui.io/)
-2. Visit the [Sui Discord](https://discord.gg/sui)
-3. Review contract code in `contracts/todo/sources/todo.move`
-4. Check browser console for detailed error messages
 
 ## 🤝 Contributing
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Run tests (`npm run test`)
-4. Commit your changes (`git commit -m 'Add amazing feature'`)
-5. Push to the branch (`git push origin feature/amazing-feature`)
-6. Open a Pull Request
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Development Guidelines
+- Use TypeScript for all new code
+- Follow existing component patterns
+- Add proper error handling
+- Write descriptive commit messages
+- Test on mobile devices
+
+## 🛣 Roadmap
+
+### Phase 1: Core Platform ✅
+- [x] User authentication system
+- [x] Social feed with posts and interactions
+- [x] Token dashboard and market data
+- [x] User profiles and search functionality
+- [x] Notification system
+
+### Phase 2: Blockchain Integration 🚧
+- [ ] Sui wallet connection
+- [ ] Real token creation and trading
+- [ ] Smart contract deployment
+- [ ] On-chain social interactions
+- [ ] Token holder rewards
+
+### Phase 3: Advanced Features 📅
+- [ ] Real-time chat and messaging
+- [ ] Advanced token analytics
+- [ ] Mobile app development
+- [ ] Cross-chain compatibility
+- [ ] NFT integration
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-- [Sui Foundation](https://sui.io/) for the blockchain platform
-- [Mysten Labs](https://mystenlabs.com/) for the development tools
-- [Vite](https://vitejs.dev/) for the build system
-- [React](https://reactjs.org/) for the frontend framework
+- [Sui Foundation](https://sui.io/) - Blockchain platform
+- [Mysten Labs](https://mystenlabs.com/) - Development tools
+- [shadcn/ui](https://ui.shadcn.com/) - UI component library
+- [Tailwind CSS](https://tailwindcss.com/) - Styling framework
+- [Lucide React](https://lucide.dev/) - Icon library
+
+## 📞 Support
+
+- Create an [Issue](https://github.com/your-username/memeflow/issues)
+- Join our [Discord](https://discord.gg/memeflow)
+- Follow us on [Twitter](https://twitter.com/memeflow)
+
+---
+
+<div align="center">
+Made with ❤️ for the meme community 🚀
+</div>
