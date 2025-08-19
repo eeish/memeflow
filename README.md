@@ -16,6 +16,8 @@ A comprehensive social trading platform built on React 19 and TypeScript, design
 - **Search & Discovery**: Find tokens, users, and trending hashtags
 
 ### 👤 User Experience
+- **Wallet Integration**: Sui wallet connection with address verification
+- **New User Detection**: Prevents duplicate accounts per wallet address
 - **Profile Management**: Personal profiles with token portfolios and social stats
 - **Notifications**: Real-time activity feed with categorized updates
 - **Authentication**: Secure sign-up/sign-in with persistent sessions
@@ -23,8 +25,10 @@ A comprehensive social trading platform built on React 19 and TypeScript, design
 
 ### ⚡ Modern Tech Stack
 - **Frontend**: React 19 + TypeScript + Vite
+- **Backend**: Rust + Axum web framework for high-performance API
 - **UI Components**: Comprehensive shadcn/ui library with 40+ components
 - **Styling**: Tailwind CSS with custom design system and animations
+- **Database**: SQLite (dev) / PostgreSQL (prod) with SQLx
 - **Blockchain Ready**: Sui Network integration for future token trading
 
 ## 🚀 Quick Start
@@ -60,6 +64,10 @@ npm run preview      # Preview production build
 npm run lint         # Run ESLint
 npm run typecheck    # Run TypeScript checks
 
+# Backend Service (Rust)
+cd service && cargo run   # Start Rust API server on :3001
+cd service && cargo test  # Run service tests
+
 # Blockchain (Future)
 npm run contract:build    # Build Move smart contracts
 npm run contract:test     # Test smart contracts
@@ -84,6 +92,14 @@ memeflow/
 │   ├── main.tsx             # Application entry point
 │   └── index.css            # Global styles with design system
 ├── contracts/               # Sui Move smart contracts (future)
+├── service/                 # Rust backend service
+│   ├── src/                # Rust source code
+│   │   ├── main.rs         # Web server and routing
+│   │   ├── models.rs       # Data structures
+│   │   ├── handlers.rs     # API endpoints
+│   │   └── database.rs     # Database operations
+│   ├── Cargo.toml          # Rust dependencies
+│   └── README.md           # Service documentation
 ├── public/                  # Static assets
 ├── tailwind.config.js       # Tailwind CSS configuration
 ├── vite.config.ts          # Vite configuration

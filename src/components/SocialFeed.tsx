@@ -4,80 +4,62 @@ import { Button } from './ui/button';
 import { Avatar } from './ui/avatar';
 import { Textarea } from './ui/textarea';
 import { Alert, AlertDescription } from './ui/alert';
-import { Heart, MessageCircle, Repeat2, Share, TrendingUp, Send, AlertCircle, Sparkles } from 'lucide-react';
+import { Heart, MessageCircle, Repeat2, Share, TrendingUp, Send, AlertCircle, Sparkles, UserPlus } from 'lucide-react';
+import { apiService, type PostWithAuthor, type FollowStatusResponse } from '../lib/api';
 
 interface SocialFeedProps {
   user: any;
 }
 
 export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
-  const [posts, setPosts] = useState<any[]>([]);
+  const [posts, setPosts] = useState<PostWithAuthor[]>([]);
   const [newPost, setNewPost] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [followStatuses, setFollowStatuses] = useState<{[key: string]: FollowStatusResponse}>({});
+  const [userLikes, setUserLikes] = useState<{[key: string]: boolean}>({});
 
   useEffect(() => {
     fetchPosts();
-  }, []);
+  }, [user]);
 
   const fetchPosts = async () => {
     try {
-      // Mock posts data - replace with real API
-      const mockPosts = [
-        {
-          id: '1',
-          content: 'Just launched my personal token! 🚀 $MEME is going to the moon! Who wants to buy in? #MemeFlow #ToTheMoon',
-          author: {
-            id: '1',
-            username: 'cryptokid',
-            avatar: null
-          },
-          created_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(), // 30 mins ago
-          likes: 42,
-          comments: 12,
-          reposts: 8,
-          liked: false,
-          token_mention: {
-            symbol: 'MEME',
-            price: 0.0012,
-            change: +15.3
+      setError('');
+      let response;
+      
+      // If user has an ID, get their personalized feed, otherwise get general posts
+      if (user?.id) {
+        response = await apiService.getNewsFeed(user.id);
+      } else {
+        response = await apiService.getPosts();
+      }
+      
+      if (response.success && response.data) {
+        setPosts(response.data);
+        
+        // Pre-fetch follow statuses for all unique authors
+        if (user?.id) {
+          const uniqueAuthors = Array.from(new Set(response.data.map(post => post.author_id)))
+            .filter(authorId => authorId !== user.id);
+          
+          for (const authorId of uniqueAuthors) {
+            try {
+              const followResponse = await apiService.getFollowStatus(authorId, user.id);
+              if (followResponse.success && followResponse.data) {
+                setFollowStatuses(prev => ({
+                  ...prev,
+                  [authorId]: followResponse.data!
+                }));
+              }
+            } catch (error) {
+              console.warn(`Failed to fetch follow status for user ${authorId}:`, error);
+            }
           }
-        },
-        {
-          id: '2',
-          content: 'Market is looking bullish today! My $HODL token is up 25% 📈 Time to celebrate with some memes!',
-          author: {
-            id: '2',
-            username: 'moonlambo',
-            avatar: null
-          },
-          created_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(), // 2 hours ago
-          likes: 156,
-          comments: 34,
-          reposts: 22,
-          liked: true,
-          token_mention: {
-            symbol: 'HODL',
-            price: 0.0089,
-            change: +25.1
-          }
-        },
-        {
-          id: '3',
-          content: 'Who else thinks we need more meme tokens in the ecosystem? The community is what makes these projects special! 🎭✨',
-          author: {
-            id: '3',
-            username: 'memequeen',
-            avatar: null
-          },
-          created_at: new Date(Date.now() - 1000 * 60 * 60 * 4).toISOString(), // 4 hours ago
-          likes: 89,
-          comments: 45,
-          reposts: 15,
-          liked: false
         }
-      ];
-      setPosts(mockPosts);
+      } else {
+        setError(response.error || 'Failed to load posts');
+      }
     } catch (error) {
       console.error('Failed to fetch posts:', error);
       setError('Failed to load posts');
@@ -85,29 +67,25 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
   };
 
   const handleCreatePost = async () => {
-    if (!newPost.trim()) return;
+    if (!newPost.trim() || !user?.id) return;
     
     setLoading(true);
     try {
-      // Mock post creation - replace with real API
-      const newPostObj = {
-        id: Date.now().toString(),
+      const response = await apiService.createPost({
+        author_id: user.id,
         content: newPost,
-        author: {
-          id: user.id,
-          username: user.username,
-          avatar: user.avatar
-        },
-        created_at: new Date().toISOString(),
-        likes: 0,
-        comments: 0,
-        reposts: 0,
-        liked: false
-      };
+        media_urls: []
+      });
       
-      setPosts([newPostObj, ...posts]);
-      setNewPost('');
+      if (response.success && response.data) {
+        // Refresh posts to get the updated feed
+        await fetchPosts();
+        setNewPost('');
+      } else {
+        setError(response.error || 'Failed to create post');
+      }
     } catch (error) {
+      console.error('Failed to create post:', error);
       setError('Failed to create post');
     } finally {
       setLoading(false);
@@ -115,15 +93,63 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
   };
 
   const handleLike = async (postId: string) => {
-    setPosts(posts.map(post => 
-      post.id === postId 
-        ? { 
-            ...post, 
-            liked: !post.liked, 
-            likes: post.liked ? post.likes - 1 : post.likes + 1 
-          }
-        : post
-    ));
+    if (!user?.id) return;
+    
+    try {
+      const response = await apiService.likePost(postId, user.id);
+      
+      if (response.success) {
+        const isNowLiked = response.data;
+        
+        // Update the local state
+        setPosts(posts.map(post => 
+          post.id === postId 
+            ? { 
+                ...post, 
+                likes_count: isNowLiked ? post.likes_count + 1 : post.likes_count - 1
+              }
+            : post
+        ));
+        
+        // Track user's like status
+        setUserLikes(prev => ({
+          ...prev,
+          [postId]: isNowLiked ?? false
+        }));
+      } else {
+        setError('Failed to like post');
+      }
+    } catch (error) {
+      console.error('Failed to like post:', error);
+      setError('Failed to like post');
+    }
+  };
+
+  const handleFollow = async (userId: string) => {
+    if (!user?.id) return;
+
+    try {
+      const isCurrentlyFollowing = followStatuses[userId]?.is_following;
+      let response;
+      
+      if (isCurrentlyFollowing) {
+        response = await apiService.unfollowUser(userId, user.id);
+      } else {
+        response = await apiService.followUser(userId, user.id);
+      }
+      
+      if (response.success && response.data) {
+        setFollowStatuses(prev => ({
+          ...prev,
+          [userId]: response.data!
+        }));
+      } else {
+        setError(response.error || 'Failed to update follow status');
+      }
+    } catch (error) {
+      console.error('Failed to update follow status:', error);
+      setError('Failed to update follow status');
+    }
   };
 
   const formatTimeAgo = (dateString: string) => {
@@ -194,87 +220,118 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
 
       {/* Posts */}
       <div className="space-y-4">
-        {posts.map((post) => (
-          <Card key={post.id} className="glass border border-white/10 p-6 hover:border-white/20 transition-all duration-300">
-            <div className="flex space-x-4">
-              <Avatar className="w-12 h-12 bg-gradient-to-r from-cyan-400 to-purple-400 flex items-center justify-center">
-                <span className="text-white font-bold">
-                  {post.author.username[0].toUpperCase()}
-                </span>
-              </Avatar>
-              <div className="flex-1">
-                <div className="flex items-center space-x-2 mb-2">
-                  <span className="font-semibold text-white">@{post.author.username}</span>
-                  <span className="text-white/50 text-sm">·</span>
-                  <span className="text-white/50 text-sm">{formatTimeAgo(post.created_at)}</span>
-                </div>
-                
-                <p className="text-white/90 mb-4 leading-relaxed">{post.content}</p>
-                
-                {post.token_mention && (
-                  <Card className="glass border border-white/10 p-3 mb-4 bg-gradient-to-r from-cyan-500/10 to-pink-500/10">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <TrendingUp className="w-5 h-5 text-cyan-400" />
-                        <span className="font-semibold text-white">${post.token_mention.symbol}</span>
-                      </div>
-                      <div className="flex items-center space-x-4">
-                        <span className="text-white/70">${post.token_mention.price.toFixed(4)}</span>
-                        <span className={`text-sm px-2 py-1 rounded ${
-                          post.token_mention.change > 0 
-                            ? 'text-green-400 bg-green-500/20' 
-                            : 'text-red-400 bg-red-500/20'
-                        }`}>
-                          {post.token_mention.change > 0 ? '+' : ''}{post.token_mention.change.toFixed(1)}%
-                        </span>
-                      </div>
+        {posts.map((post) => {
+          const isOwnPost = user?.id === post.author_id;
+          const followStatus = followStatuses[post.author_id];
+          const isLiked = userLikes[post.id] ?? false;
+          
+          return (
+            <Card key={post.id} className="glass border border-white/10 p-6 hover:border-white/20 transition-all duration-300">
+              <div className="flex space-x-4">
+                <Avatar className="w-12 h-12 bg-gradient-to-r from-cyan-400 to-purple-400 flex items-center justify-center">
+                  <span className="text-white font-bold">
+                    {post.author.username[0].toUpperCase()}
+                  </span>
+                </Avatar>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-semibold text-white">@{post.author.username}</span>
+                      {post.author.display_name && (
+                        <span className="text-white/70">({post.author.display_name})</span>
+                      )}
+                      <span className="text-white/50 text-sm">·</span>
+                      <span className="text-white/50 text-sm">{formatTimeAgo(post.created_at)}</span>
                     </div>
-                  </Card>
-                )}
-                
-                <div className="flex items-center justify-between text-white/60">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleLike(post.id)}
-                    className={`hover:bg-pink-500/20 hover:text-pink-400 ${
-                      post.liked ? 'text-pink-400' : ''
-                    }`}
-                  >
-                    <Heart className={`w-4 h-4 mr-1 ${post.liked ? 'fill-current' : ''}`} />
-                    {post.likes}
-                  </Button>
+                    
+                    {/* Follow button - only show if not own post and user is logged in */}
+                    {!isOwnPost && user?.id && (
+                      <Button
+                        variant={followStatus?.is_following ? "outline" : "default"}
+                        size="sm"
+                        onClick={() => handleFollow(post.author_id)}
+                        className={`text-xs px-3 py-1 ${
+                          followStatus?.is_following
+                            ? 'bg-white/10 text-white hover:bg-red-500/20 hover:text-red-300 border-white/20'
+                            : 'bg-gradient-to-r from-cyan-500 to-pink-500 hover:from-cyan-600 hover:to-pink-600 text-white'
+                        }`}
+                      >
+                        <UserPlus className="w-3 h-3 mr-1" />
+                        {followStatus?.is_following ? 'Unfollow' : 'Follow'}
+                      </Button>
+                    )}
+                  </div>
                   
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="hover:bg-cyan-500/20 hover:text-cyan-400"
-                  >
-                    <MessageCircle className="w-4 h-4 mr-1" />
-                    {post.comments}
-                  </Button>
+                  <p className="text-white/90 mb-4 leading-relaxed">{post.content}</p>
                   
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="hover:bg-green-500/20 hover:text-green-400"
-                  >
-                    <Repeat2 className="w-4 h-4 mr-1" />
-                    {post.reposts}
-                  </Button>
+                  {/* Token mention detection - simple regex */}
+                  {(() => {
+                    const tokenMention = post.content.match(/\$([A-Z]+)/);
+                    if (tokenMention) {
+                      return (
+                        <Card className="glass border border-white/10 p-3 mb-4 bg-gradient-to-r from-cyan-500/10 to-pink-500/10">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <TrendingUp className="w-5 h-5 text-cyan-400" />
+                              <span className="font-semibold text-white">${tokenMention[1]}</span>
+                            </div>
+                            <div className="flex items-center space-x-4">
+                              <span className="text-white/70">Token mentioned</span>
+                              <span className="text-cyan-400 text-sm px-2 py-1 rounded bg-cyan-500/20">
+                                🚀 Trending
+                              </span>
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    }
+                    return null;
+                  })()}
                   
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="hover:bg-purple-500/20 hover:text-purple-400"
-                  >
-                    <Share className="w-4 h-4" />
-                  </Button>
+                  <div className="flex items-center justify-between text-white/60">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleLike(post.id)}
+                      className={`hover:bg-pink-500/20 hover:text-pink-400 ${
+                        isLiked ? 'text-pink-400' : ''
+                      }`}
+                    >
+                      <Heart className={`w-4 h-4 mr-1 ${isLiked ? 'fill-current' : ''}`} />
+                      {post.likes_count}
+                    </Button>
+                    
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="hover:bg-cyan-500/20 hover:text-cyan-400"
+                    >
+                      <MessageCircle className="w-4 h-4 mr-1" />
+                      {post.comments_count}
+                    </Button>
+                    
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="hover:bg-green-500/20 hover:text-green-400"
+                    >
+                      <Repeat2 className="w-4 h-4 mr-1" />
+                      {post.reposts_count}
+                    </Button>
+                    
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="hover:bg-purple-500/20 hover:text-purple-400"
+                    >
+                      <Share className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
       </div>
       
       {posts.length === 0 && (

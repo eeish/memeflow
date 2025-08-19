@@ -31,84 +31,15 @@ export const SearchPage: React.FC<SearchPageProps> = () => {
   const performSearch = async (query: string) => {
     setLoading(true);
     try {
-      // Mock search results - replace with real API
-      const mockResults = {
-        tokens: [
-          {
-            id: '1',
-            symbol: 'MEME',
-            name: 'MemeToken',
-            price: 0.0012,
-            change24h: +15.3,
-            marketCap: 1200000,
-            holders: 342,
-            creator: 'cryptokid'
-          },
-          {
-            id: '2',
-            symbol: 'HODL',
-            name: 'HodlCoin',
-            price: 0.0089,
-            change24h: +25.1,
-            marketCap: 2100000,
-            holders: 567,
-            creator: 'moonlambo'
-          }
-        ].filter(token => 
-          token.symbol.toLowerCase().includes(query.toLowerCase()) ||
-          token.name.toLowerCase().includes(query.toLowerCase()) ||
-          token.creator.toLowerCase().includes(query.toLowerCase())
-        ),
-        users: [
-          {
-            id: '1',
-            username: 'cryptokid',
-            followers: 1200,
-            tokens: 2,
-            verified: true
-          },
-          {
-            id: '2',
-            username: 'moonlambo',
-            followers: 890,
-            tokens: 1,
-            verified: false
-          },
-          {
-            id: '3',
-            username: 'memequeen',
-            followers: 2400,
-            tokens: 3,
-            verified: true
-          }
-        ].filter(user => 
-          user.username.toLowerCase().includes(query.toLowerCase())
-        ),
-        hashtags: [
-          {
-            id: '1',
-            tag: 'MemeFlow',
-            posts: 1234,
-            trending: true
-          },
-          {
-            id: '2',
-            tag: 'ToTheMoon',
-            posts: 567,
-            trending: true
-          },
-          {
-            id: '3',
-            tag: 'DeFi',
-            posts: 890,
-            trending: false
-          }
-        ].filter(hashtag =>
-          hashtag.tag.toLowerCase().includes(query.toLowerCase())
-        )
+      // TODO: Implement real API calls to search tokens, users, and hashtags
+      // For now, return empty results
+      const emptyResults = {
+        tokens: [],
+        users: [],
+        hashtags: []
       };
 
-      setSearchResults(mockResults);
+      setSearchResults(emptyResults);
     } catch (error) {
       console.error('Search failed:', error);
     } finally {
