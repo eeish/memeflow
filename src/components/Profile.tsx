@@ -11,6 +11,9 @@ import { FollowButton } from './FollowButton';
 import { useSuiClient } from '@mysten/dapp-kit';
 import { useNetwork } from '../contexts/NetworkContext';
 import { NetworkWarning } from './NetworkWarning';
+import { DebugNetwork } from './DebugNetwork';
+import { FaucetButton } from './FaucetButton';
+import { useNotifications } from '../contexts/NotificationContext';
 
 interface ProfileProps {
   user: any;
@@ -21,6 +24,7 @@ export const Profile: React.FC<ProfileProps> = ({ user }) => {
   const { userProfile, followingList, createProfile, error: socialError } = useSocialFollow();
   const client = useSuiClient();
   const { currentNetwork } = useNetwork();
+  const { debugMode } = useNotifications();
   const [profileData, setProfileData] = useState<any>({});
   const [userTokens, setUserTokens] = useState<any[]>([]);
   const [posts, setPosts] = useState<any[]>([]);
@@ -112,8 +116,11 @@ export const Profile: React.FC<ProfileProps> = ({ user }) => {
 
   return (
     <div className="space-y-6">
-      {/* Network Warning */}
-      <NetworkWarning />
+      {/* Network Warning - Only show in debug mode */}
+      {debugMode && <NetworkWarning />}
+      
+      {/* Debug Network Info - Only show in debug mode */}
+      {debugMode && <DebugNetwork />}
       
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900">
@@ -145,6 +152,11 @@ export const Profile: React.FC<ProfileProps> = ({ user }) => {
               <div className="mt-2 text-xs text-blue-200">
                 Network: {currentNetwork}
               </div>
+              {socialError?.includes('No valid gas coins') && (
+                <div className="mt-3">
+                  <FaucetButton />
+                </div>
+              )}
             </div>
             <Button
               onClick={() => createProfile(user.username, 'Meme enthusiast', user.avatar_url || '')}
@@ -187,20 +199,10 @@ export const Profile: React.FC<ProfileProps> = ({ user }) => {
             </p>
             
             <div className="flex items-center space-x-6 text-sm text-gray-600 mb-4">
-              <div>📍 {profileData.location || 'Metaverse'}</div>
-              <div>🌐 {profileData.website || 'memeflow.io'}</div>
               <div>📅 Joined {formatTimeAgo(profileData.joinedDate || user.created_at)}</div>
             </div>
             
             <div className="flex items-center space-x-8">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-gray-900">{profileData.totalPosts || 0}</div>
-                <div className="text-gray-600 text-sm">Posts</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">{profileData.tokensCreated || 0}</div>
-                <div className="text-gray-600 text-sm">Tokens</div>
-              </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-purple-600">{userProfile?.followerCount || profileData.followers || 0}</div>
                 <div className="text-gray-600 text-sm">Followers</div>
@@ -219,32 +221,48 @@ export const Profile: React.FC<ProfileProps> = ({ user }) => {
         <Card className="bg-white border border-[#ECECEC] p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900 flex items-center">
-              <Coins className="w-5 h-5 mr-2 text-blue-600" />
-              Token Performance
+              <TrendingUp className="w-5 h-5 mr-2 text-blue-600" />
+              Share Price
             </h3>
           </div>
           
-          {userTokens.length > 0 ? (
+          {userProfile ? (
             <div className="space-y-4">
-              {userTokens.map((token) => (
-                <div key={token.id} className="flex items-center justify-between p-3 rounded-lg bg-gray-50">
-                  <div>
-                    <div className="font-semibold text-gray-900">${token.symbol}</div>
-                    <div className="text-sm text-gray-600">{formatNumber(token.holders)} holders</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-gray-900">${token.price.toFixed(4)}</div>
-                    <div className={`text-sm ${token.change24h > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {token.change24h > 0 ? '+' : ''}{token.change24h.toFixed(1)}%
-                    </div>
-                  </div>
+              <div className="p-4 rounded-lg bg-gradient-to-r from-blue-50 to-purple-50">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-gray-600">Current Price</span>
+                  <span className="text-2xl font-bold text-gray-900">
+                    {userProfile.currentPrice ? 
+                      `${(Number(userProfile.currentPrice) / 1e9).toFixed(6)} SUI` : 
+                      '0.000000 SUI'
+                    }
+                  </span>
                 </div>
-              ))}
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-600">Next Price</span>
+                  <span className="text-lg font-semibold text-blue-600">
+                    {userProfile.nextPrice ? 
+                      `${(Number(userProfile.nextPrice) / 1e9).toFixed(6)} SUI` : 
+                      '0.000000 SUI'
+                    }
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-600">Followers (Supply)</span>
+                  <span className="text-gray-900 font-semibold">{userProfile.followerCount || 0}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-600">Free Follows Left</span>
+                  <span className="text-purple-600 font-semibold">{userProfile.sponsorLeft || 0}</span>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="text-center py-8">
-              <Coins className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-              <p className="text-gray-600">No tokens created yet</p>
+              <DollarSign className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+              <p className="text-gray-600">Create a profile to see share prices</p>
             </div>
           )}
         </Card>
@@ -252,115 +270,47 @@ export const Profile: React.FC<ProfileProps> = ({ user }) => {
         <Card className="bg-white border border-[#ECECEC] p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900 flex items-center">
-              <TrendingUp className="w-5 h-5 mr-2 text-green-600" />
-              Earnings
+              <Users className="w-5 h-5 mr-2 text-green-600" />
+              Social Stats
             </h3>
           </div>
           
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-gray-600">Total Earnings</span>
-              <span className="text-gray-900 font-semibold">{profileData.totalEarnings?.toFixed(4) || '0.0000'} SUI</span>
+              <span className="text-gray-600">Total Followers</span>
+              <span className="text-gray-900 font-semibold">{userProfile?.followerCount || 0}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-gray-600">Best Performer</span>
-              <span className="text-green-600 font-semibold">{profileData.bestPerforming || 'N/A'}</span>
+              <span className="text-gray-600">Total Following</span>
+              <span className="text-gray-900 font-semibold">{userProfile?.followingCount || followingList.length || 0}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-gray-600">Active Tokens</span>
-              <span className="text-blue-600 font-semibold">{userTokens.length}</span>
+              <span className="text-gray-600">Profile ID</span>
+              <span className="text-blue-600 font-mono text-xs">
+                {userProfile?.id ? `${userProfile.id.slice(0, 6)}...${userProfile.id.slice(-4)}` : 'Not created'}
+              </span>
             </div>
           </div>
         </Card>
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="posts" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-3 bg-gray-100">
-          <TabsTrigger value="posts" className="text-gray-700 data-[state=active]:bg-blue-500 data-[state=active]:text-white">
-            Posts
-          </TabsTrigger>
-          <TabsTrigger value="tokens" className="text-gray-700 data-[state=active]:bg-purple-500 data-[state=active]:text-white">
-            Tokens
-          </TabsTrigger>
+      <Tabs defaultValue="social" className="space-y-6">
+        <TabsList className="grid w-full grid-cols-2 bg-gray-100">
           <TabsTrigger value="social" className="text-gray-700 data-[state=active]:bg-green-500 data-[state=active]:text-white">
             Social
           </TabsTrigger>
+          <TabsTrigger value="activity" className="text-gray-700 data-[state=active]:bg-blue-500 data-[state=active]:text-white">
+            Activity
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="posts" className="space-y-4">
-          {posts.length > 0 ? (
-            <div className="space-y-4">
-              {posts.map((post) => (
-                <Card key={post.id} className="bg-white border border-[#ECECEC] p-6">
-                  <div className="flex space-x-4">
-                    <Avatar className="w-10 h-10 border border-gray-200">
-                      {user.avatar_url && (
-                        <AvatarImage src={user.avatar_url} alt={`@${user.username}`} />
-                      )}
-                      <AvatarFallback className="bg-gradient-to-r from-blue-500 to-purple-500 text-white text-sm font-bold">
-                        {user.username[0].toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-2">
-                        <span className="font-semibold text-gray-900">@{user.username}</span>
-                        <span className="text-gray-500 text-sm">·</span>
-                        <span className="text-gray-500 text-sm">{formatTimeAgo(post.created_at)}</span>
-                      </div>
-                      <p className="text-gray-800 mb-3">{post.content}</p>
-                      <div className="flex items-center space-x-4 text-gray-600 text-sm">
-                        <span>❤️ {post.likes}</span>
-                        <span>💬 {post.comments}</span>
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <Card className="bg-white border border-[#ECECEC] p-12 text-center">
-              <User className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-gray-700 mb-2">No posts yet</h3>
-              <p className="text-gray-600">Start sharing your thoughts with the community!</p>
-            </Card>
-          )}
-        </TabsContent>
-
-        <TabsContent value="tokens" className="space-y-4">
-          {userTokens.length > 0 ? (
-            <div className="grid gap-4">
-              {userTokens.map((token) => (
-                <Card key={token.id} className="bg-white border border-purple-200 p-6 bg-gradient-to-r from-purple-50 to-pink-50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-4">
-                      <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
-                        <span className="text-white font-bold text-sm">{token.symbol.slice(0, 3)}</span>
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-gray-900">${token.symbol}</h3>
-                        <p className="text-gray-600 text-sm">Created {formatTimeAgo(token.created_at)}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-gray-900 font-semibold">${token.price.toFixed(4)}</div>
-                      <div className="text-gray-700 text-sm">{formatNumber(token.marketCap)} MCap</div>
-                      <div className="text-gray-600 text-sm">{token.holders} holders</div>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <Card className="bg-white border border-[#ECECEC] p-12 text-center">
-              <Coins className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-gray-700 mb-2">No tokens created</h3>
-              <p className="text-gray-600 mb-4">Your first token is automatically created when you join!</p>
-              <Button className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600">
-                Create Token
-              </Button>
-            </Card>
-          )}
+        <TabsContent value="activity" className="space-y-4">
+          <Card className="bg-white border border-[#ECECEC] p-12 text-center">
+            <TrendingUp className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-gray-700 mb-2">No recent activity</h3>
+            <p className="text-gray-600">Your follow and unfollow activity will appear here</p>
+          </Card>
         </TabsContent>
 
         <TabsContent value="social" className="space-y-6">

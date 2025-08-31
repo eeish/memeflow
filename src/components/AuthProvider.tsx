@@ -11,7 +11,7 @@ import { Card } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
 import { Check, Wallet, Sparkles, Zap } from 'lucide-react';
 import { MemeLaunchPage } from './MemeLaunchPage';
-import { useCreateToken } from '../hooks/useContracts';
+// Token creation hook removed - focusing on social features only
 import { useNetwork } from '../contexts/NetworkContext';
 
 const AuthContext = createContext<any>(null);
@@ -32,7 +32,10 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
   const [success, setSuccess] = useState('');
   const [showMemeLaunch, setShowMemeLaunch] = useState(false);
   const [pendingWalletAddress, setPendingWalletAddress] = useState<string>('');
-  const [authenticatedWallet, setAuthenticatedWallet] = useState<string>('');
+  const [authenticatedWallet, setAuthenticatedWallet] = useState<string>(() => {
+    // Initialize from localStorage to persist across refreshes
+    return localStorage.getItem('authenticated_wallet') || '';
+  });
   const [authChallenge, setAuthChallenge] = useState<string | null>(null);
 
   // Wallet hooks
@@ -44,9 +47,6 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
   // Network context
   const { networkConfig } = useNetwork();
-
-  // Contract hooks
-  const { createToken, creating: creatingToken, error: contractError } = useCreateToken();
 
   useEffect(() => {
     console.log('🏁 [AUTH_PROVIDER] Component mounted, starting initial auth check');
@@ -90,12 +90,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     };
   }, [user, currentWallet]);
 
-  // Handle contract errors
-  useEffect(() => {
-    if (contractError) {
-      setError(`Contract Error: ${contractError}`);
-    }
-  }, [contractError]);
+  // Contract error handling removed - no longer using token contracts
 
   // Handle wallet connection and authentication with strict enforcement
   useEffect(() => {
@@ -137,10 +132,23 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     };
 
     const startWalletAuthentication = async (walletAddress: string) => {
-      // Additional check: if we already authenticated this wallet in this session
-      if (authenticatedWallet === walletAddress) {
-        console.log('🔐 [WALLET_AUTH] Wallet already authenticated in this session, skipping');
-        return;
+      // Check if we already authenticated this wallet (persisted across refreshes)
+      const storedAuthWallet = localStorage.getItem('authenticated_wallet');
+      const existingUsername = localStorage.getItem('username');
+      
+      if ((authenticatedWallet === walletAddress || storedAuthWallet === walletAddress) && existingUsername) {
+        console.log('🔐 [WALLET_AUTH] Wallet already authenticated with existing user, attempting restore');
+        // Try to restore user data without requiring new signature
+        const restored = await authenticateExistingUser(walletAddress);
+        if (restored) {
+          return;
+        }
+        // If restore failed, clear auth state and continue with new authentication
+        console.log('⚠️ [WALLET_AUTH] User restore failed, proceeding with new authentication');
+        localStorage.removeItem('authenticated_wallet');
+        localStorage.removeItem('username');
+        localStorage.removeItem('wallet_address');
+        setAuthenticatedWallet('');
       }
       
       // Prevent infinite loop - check if we're already processing this wallet
@@ -208,6 +216,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     localStorage.removeItem('blockchain_tx');
     localStorage.removeItem('wallet_auth_completed');
     localStorage.removeItem('wallet_processing');
+    localStorage.removeItem('authenticated_wallet');
     
     // Disconnect wallet if still connected
     if (currentWallet) {
@@ -294,8 +303,9 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         setSuccess('Wallet authenticated! Let\'s create your meme token!');
       }
       
-      // Store successful authentication  
+      // Store successful authentication persistently
       localStorage.setItem('wallet_auth_completed', Date.now().toString());
+      localStorage.setItem('authenticated_wallet', walletAddress);
       setAuthenticatedWallet(walletAddress);
       
     } catch (error) {
@@ -304,12 +314,12 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     }
   };
 
-  const authenticateExistingUser = async (walletAddress: string): Promise<void> => {
+  const authenticateExistingUser = async (walletAddress: string): Promise<boolean> => {
     try {
       const response = await fetch(`http://localhost:3001/api/users/by-address/${walletAddress}`);
       const data = await response.json();
       
-      if (data.success) {
+      if (data.success && data.data) {
         console.log('✅ [AUTH_USER] User profile fetched successfully');
         const existingUser = {
           ...data.data,
@@ -325,13 +335,15 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         localStorage.setItem('wallet_address', walletAddress);
         localStorage.setItem('username', existingUser.username);
         localStorage.setItem('token_symbol', existingUser.token_symbol);
+        return true;
       } else {
-        throw new Error('Failed to fetch user profile');
+        console.log('⚠️ [AUTH_USER] User not found in database');
+        return false;
       }
     } catch (error) {
       console.error('❌ [AUTH_USER] Failed to authenticate existing user:', error);
       setError('Failed to load user profile');
-      throw error;
+      return false;
     }
   };
 
@@ -366,6 +378,8 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     avatarUrl?: string;
   }) => {
     try {
+      console.log('📝 Creating user with data:', userData);
+      
       const response = await fetch('http://localhost:3001/api/users', {
         method: 'POST',
         headers: {
@@ -374,20 +388,29 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         body: JSON.stringify({
           wallet_address: userData.walletAddress,
           username: userData.username,
-          display_name: userData.displayName,
+          display_name: userData.displayName || userData.username,
           bio: userData.bio,
           avatar_url: userData.avatarUrl,
         }),
       });
       
       const data = await response.json();
+      console.log('📬 Backend response:', { status: response.status, ok: response.ok, data });
+      
       if (response.ok && data.success) {
         return data.data;
       } else {
-        throw new Error(data.error || 'Failed to create user');
+        console.error('❌ Backend error details:', data);
+        throw new Error(data.error || data.message || 'Failed to create user');
       }
-    } catch (error) {
-      console.error('Error creating user:', error);
+    } catch (error: any) {
+      console.error('❌ Error creating user:', error);
+      
+      // If it's a network error, provide more specific message
+      if (error.message === 'Failed to fetch') {
+        throw new Error('Unable to connect to backend server. Please ensure the server is running.');
+      }
+      
       throw error;
     }
   };
@@ -403,9 +426,10 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       const tokenSymbol = localStorage.getItem('token_symbol');
       const blockchainTx = localStorage.getItem('blockchain_tx');
       const authCompleted = localStorage.getItem('wallet_auth_completed');
+      const authenticatedWalletStored = localStorage.getItem('authenticated_wallet');
       
-      // Only restore session if we have proof of completed wallet authentication
-      if (walletAddress && username && authCompleted) {
+      // Restore session if we have valid wallet authentication data
+      if (walletAddress && username) {
         console.log('🔗 [CHECK_AUTH] Found authenticated wallet session:', { walletAddress, username });
         
         // Try to get user from backend to restore full profile
@@ -419,9 +443,11 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
               ...data.data,
               authMethod: 'wallet' as const,
               hasBlockchainToken: !!blockchainTx,
-              blockchainTx: blockchainTx || null
+              blockchainTx: blockchainTx || null,
+              wallet_address: walletAddress // Ensure wallet_address is set
             };
             setUser(restoredUser);
+            setAuthenticatedWallet(walletAddress);
             setSuccess(`Welcome back, @${restoredUser.username}!`);
             return;
           }
@@ -451,6 +477,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         };
         
         setUser(fallbackUser);
+        setAuthenticatedWallet(walletAddress);
         setSuccess(`Welcome back, @${username}!`);
         return;
       }
@@ -479,6 +506,12 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     try {
       setLoading(true);
       setError('');
+      
+      // Clear any stale authentication state before connecting
+      console.log('🔄 [WALLET_CONNECT] Starting fresh wallet connection');
+      localStorage.removeItem('authenticated_wallet');
+      localStorage.removeItem('wallet_processing');
+      setAuthenticatedWallet('');
       
       // Check if any wallets are available
       if (wallets.length === 0) {
@@ -522,39 +555,21 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       setLoading(true);
       setError('');
       
-      console.log('Creating user with meme launch data:', userData);
+      console.log('🚀 Creating user with meme launch data:', userData);
+      console.log('🔑 Pending wallet address:', pendingWalletAddress);
       
       // Step 1: Create user in backend database
       const newUser = await createUserWithWallet({
         walletAddress: pendingWalletAddress,
         username: userData.username,
-        displayName: userData.displayName,
+        displayName: userData.displayName || userData.username, // Use username as fallback
         bio: userData.bio,
         avatarUrl: userData.avatarUrl,
       });
       
-      // Step 2: Try to create meme token on blockchain (optional)
-      console.log('Attempting to create token on blockchain...');
-      let tokenResult = null;
+      // Step 2: Token creation removed - focusing on social features only
+      console.log('Token creation on blockchain has been disabled - focusing on social features');
       let blockchainTx = null;
-      
-      try {
-        tokenResult = await createToken(userData, 1); // 1 SUI creation fee
-        
-        if (tokenResult.success) {
-          console.log('Token created successfully:', tokenResult.transactionHash);
-          blockchainTx = tokenResult.transactionHash;
-        } else {
-          console.warn('Blockchain token creation failed, continuing without it:', tokenResult.error);
-        }
-      } catch (error: any) {
-        console.warn('Blockchain token creation failed, continuing without it:', error.message);
-        
-        // Check if it's a gas-related error
-        if (error.message?.includes('gas') || error.message?.includes('coin') || error.message?.includes('balance')) {
-          console.log('💡 Tip: You can add SUI tokens to your wallet and create the blockchain token later');
-        }
-      }
       
       // Create user object for local state (blockchain token is optional)
       const userState = {
@@ -571,10 +586,12 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       setPendingWalletAddress('');
       setSuccess(`🚀 Welcome to MemeFlow, @${userData.username}! Your token $${userData.username.toUpperCase()} is now live on blockchain!`);
       
-      // Store auth info
+      // Store auth info persistently
       localStorage.setItem('wallet_address', pendingWalletAddress);
       localStorage.setItem('username', userData.username);
       localStorage.setItem('token_symbol', userData.username.toUpperCase());
+      localStorage.setItem('wallet_auth_completed', Date.now().toString());
+      localStorage.setItem('authenticated_wallet', pendingWalletAddress);
       if (blockchainTx) {
         localStorage.setItem('blockchain_tx', blockchainTx);
       }
@@ -612,6 +629,10 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       localStorage.removeItem('username');
       localStorage.removeItem('wallet_address');
       localStorage.removeItem('session_token');
+      localStorage.removeItem('wallet_auth_completed');
+      localStorage.removeItem('authenticated_wallet');
+      localStorage.removeItem('token_symbol');
+      localStorage.removeItem('blockchain_tx');
       
       // Disconnect wallet if connected
       if (currentWallet) {
@@ -644,13 +665,13 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
   // Show meme launch page for new users
   if (showMemeLaunch && pendingWalletAddress) {
-    console.log('🚀 [AUTH_PROVIDER] Rendering MemeLaunchPage for:', pendingWalletAddress, 'loading:', loading || creatingToken);
+    console.log('🚀 [AUTH_PROVIDER] Rendering MemeLaunchPage for:', pendingWalletAddress, 'loading:', loading);
     return (
       <MemeLaunchPage
         walletAddress={pendingWalletAddress}
         onComplete={handleMemeLaunchComplete}
         onCancel={handleMemeLaunchCancel}
-        loading={loading || creatingToken}
+        loading={loading}
       />
     );
   }

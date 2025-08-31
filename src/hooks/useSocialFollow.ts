@@ -7,7 +7,8 @@ import {
 } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { SUI_CLOCK_OBJECT_ID } from '@mysten/sui/utils';
-import { useDeploymentConfigWithFallback } from './useDeploymentConfig';
+import { bcs } from '@mysten/sui/bcs';
+import { useContractAddresses } from './useContractsSocial';
 
 // Constants from the contract
 const PRICE_DENOM = 16000;
@@ -25,6 +26,8 @@ export interface FollowProfile {
   username: string;
   bio: string;
   avatarUrl: string;
+  currentPrice?: bigint;
+  nextPrice?: bigint;
 }
 
 export interface FollowStats {
@@ -56,7 +59,7 @@ export function useSocialFollow() {
   const account = useCurrentAccount();
   const client = useSuiClient();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction();
-  const deployment = useDeploymentConfigWithFallback();
+  const { packageId, profileRegistryId, factoryId } = useContractAddresses();
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,9 +68,19 @@ export function useSocialFollow() {
   const [userProfile, setUserProfile] = useState<FollowProfile | null>(null);
   const [followingList, setFollowingList] = useState<string[]>([]);
   
-  // Use package ID from deployment config
-  const PACKAGE_ID = deployment.packageId || '0x0';
-  const PROFILE_REGISTRY_ID = import.meta.env.VITE_PROFILE_REGISTRY_ID || deployment.factoryId || '0x0'; // Use factoryId as fallback
+  // Update user profile with current and next price
+  useEffect(() => {
+    if (userProfile) {
+      const currentPrice = calculatePriceMist(userProfile.followerCount);
+      const nextPrice = calculatePriceMist(userProfile.followerCount + 1);
+      setUserProfile(prev => prev ? {...prev, currentPrice, nextPrice} : null);
+    }
+  }, [userProfile?.followerCount]);
+  
+  // Use package ID and registry ID from contract addresses hook
+  const PACKAGE_ID = packageId;
+  const PROFILE_REGISTRY_ID = profileRegistryId;
+  const FACTORY_ID = factoryId;
 
   // Create profile (FollowBook + Market)
   const createProfile = useCallback(async (
@@ -80,22 +93,45 @@ export function useSocialFollow() {
       return;
     }
 
-    if (deployment.isLoading) {
-      setError('Loading deployment configuration...');
-      return;
-    }
-
-    if (PACKAGE_ID === '0x0' || PACKAGE_ID === '0x0000000000000000000000000000000000000000000000000000000000000000') {
-      setError(`Contracts not deployed on ${deployment.networkName}. Please switch to devnet or deploy contracts on ${deployment.networkName}.`);
+    if (!PACKAGE_ID || PACKAGE_ID === '0x0' || PACKAGE_ID === '0x0000000000000000000000000000000000000000000000000000000000000000') {
+      setError(`Contracts not deployed. Please ensure contracts are deployed on the network.`);
       return;
     }
     
+    // Limit the size of string arguments to prevent exceeding Sui's 16KB limit
+    const MAX_STRING_SIZE = 1000; // Conservative limit for each string field
+    
+    // Truncate or replace long strings
+    const safeUsername = username.length > MAX_STRING_SIZE ? username.substring(0, MAX_STRING_SIZE) : username;
+    const safeBio = bio.length > MAX_STRING_SIZE ? bio.substring(0, MAX_STRING_SIZE) : bio;
+    
+    // For avatar URLs, use empty string if too long (common with base64 data URLs)
+    const safeAvatarUrl = avatarUrl.length > MAX_STRING_SIZE ? '' : avatarUrl;
+    
     // Log for debugging
     console.log('Creating profile with:', {
-      network: deployment.networkName,
       packageId: PACKAGE_ID,
-      profileRegistryId: PROFILE_REGISTRY_ID
+      profileRegistryId: PROFILE_REGISTRY_ID,
+      usernameLength: safeUsername.length,
+      bioLength: safeBio.length,
+      avatarUrlLength: safeAvatarUrl.length,
+      walletAddress: account.address,
+      rpcUrl: client.url
     });
+    
+    // Verify the registry object exists before attempting transaction
+    try {
+      const registryObj = await client.getObject({
+        id: PROFILE_REGISTRY_ID,
+        options: { showContent: false }
+      });
+      console.log('Registry object verified:', registryObj);
+    } catch (verifyError) {
+      console.error('Failed to verify registry object:', verifyError);
+      setError(`Registry object not found. Please ensure you're connected to the correct network.`);
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -104,12 +140,17 @@ export function useSocialFollow() {
       const tx = new Transaction();
       
       // Call create_memeflow_profile
+      // Use bcs to properly encode vector<u8> arguments
+      const usernameBytes = bcs.vector(bcs.u8()).serialize(Array.from(new TextEncoder().encode(safeUsername)));
+      const bioBytes = bcs.vector(bcs.u8()).serialize(Array.from(new TextEncoder().encode(safeBio)));
+      const avatarBytes = bcs.vector(bcs.u8()).serialize(Array.from(new TextEncoder().encode(safeAvatarUrl)));
+      
       tx.moveCall({
         target: `${PACKAGE_ID}::memeflow_social::create_memeflow_profile`,
         arguments: [
-          tx.pure.vector('u8', Array.from(new TextEncoder().encode(username))),
-          tx.pure.vector('u8', Array.from(new TextEncoder().encode(bio))),
-          tx.pure.vector('u8', Array.from(new TextEncoder().encode(avatarUrl))),
+          tx.pure(usernameBytes),
+          tx.pure(bioBytes),
+          tx.pure(avatarBytes),
           tx.object(PROFILE_REGISTRY_ID),
         ],
       });
@@ -140,7 +181,7 @@ export function useSocialFollow() {
     } finally {
       setLoading(false);
     }
-  }, [account, signAndExecute, deployment, PACKAGE_ID, PROFILE_REGISTRY_ID]);
+  }, [account, signAndExecute, PACKAGE_ID, PROFILE_REGISTRY_ID]);
 
   // Follow a user (buy key)
   const followUser = useCallback(async (

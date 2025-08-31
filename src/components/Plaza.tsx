@@ -6,19 +6,21 @@ import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Textarea } from './ui/textarea';
 import { Alert, AlertDescription } from './ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { HoverCard, HoverCardContent, HoverCardTrigger } from './ui/hover-card';
 import { FollowButton } from './FollowButton';
+import { useSocialFollow } from '../hooks/useSocialFollow';
 import { 
   Heart, 
   MessageCircle, 
   Repeat2, 
   Share, 
   TrendingUp,
-  Globe,
   Send,
   AlertCircle,
   Star,
   Users,
-  Flame
+  Flame,
+  MoreHorizontal
 } from 'lucide-react';
 
 interface PlazaPost {
@@ -52,6 +54,8 @@ export const Plaza: React.FC<PlazaProps> = ({ user }) => {
   const [posting, setPosting] = useState(false);
   const [activeTab, setActiveTab] = useState('ranked');
   const [followingList, setFollowingList] = useState<string[]>([]);
+  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const { userProfile, followUser } = useSocialFollow();
 
   const fetchPlazaPosts = async () => {
     try {
@@ -148,12 +152,31 @@ export const Plaza: React.FC<PlazaProps> = ({ user }) => {
   const formatTimeAgo = (dateString: string) => {
     const now = new Date();
     const postDate = new Date(dateString);
-    const diffInMinutes = Math.floor((now.getTime() - postDate.getTime()) / (1000 * 60));
+    const diffInSeconds = Math.floor((now.getTime() - postDate.getTime()) / 1000);
     
-    if (diffInMinutes < 1) return 'Just now';
-    if (diffInMinutes < 60) return `${diffInMinutes}m`;
-    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h`;
-    return `${Math.floor(diffInMinutes / 1440)}d`;
+    if (diffInSeconds < 60) return 'just now';
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d`;
+    if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 604800)}w`;
+    return `${Math.floor(diffInSeconds / 2592000)}mo`;
+  };
+
+  const formatPrice = (price?: number) => {
+    if (!price) return '0.0000';
+    return price < 1 ? price.toFixed(4) : price.toFixed(2);
+  };
+
+  const handleLikePost = (postId: string) => {
+    setLikedPosts(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(postId)) {
+        newSet.delete(postId);
+      } else {
+        newSet.add(postId);
+      }
+      return newSet;
+    });
   };
 
   const getAvatarFallback = (username: string) => {
@@ -163,15 +186,6 @@ export const Plaza: React.FC<PlazaProps> = ({ user }) => {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <Globe className="w-6 h-6 text-blue-600" />
-            <h1 className="text-2xl font-bold text-gray-900">
-              Plaza
-            </h1>
-          </div>
-        </div>
-        
         <div className="space-y-4">
           {[1, 2, 3].map((i) => (
             <Card key={i} className="bg-white border border-[#ECECEC] p-6 animate-pulse">
@@ -193,15 +207,6 @@ export const Plaza: React.FC<PlazaProps> = ({ user }) => {
   if (error) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <Globe className="w-6 h-6 text-blue-600" />
-            <h1 className="text-2xl font-bold text-gray-900">
-              Plaza
-            </h1>
-          </div>
-        </div>
-        
         <Card className="bg-white border border-red-200 p-6 text-center">
           <div className="text-red-600 mb-4">{error}</div>
           <Button onClick={fetchPlazaPosts} variant="outline" className="border-red-300 text-red-600 hover:bg-red-50">
@@ -214,20 +219,6 @@ export const Plaza: React.FC<PlazaProps> = ({ user }) => {
 
   return (
     <div className="space-y-6">
-      {/* Plaza Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <Globe className="w-6 h-6 text-blue-600" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Plaza
-            </h1>
-            <p className="text-sm text-gray-600">Global meme token community feed</p>
-          </div>
-        </div>
-      </div>
-
-
       {/* Error Alert */}
       {error && (
         <Alert className="border-red-200 bg-red-50">
@@ -236,254 +227,557 @@ export const Plaza: React.FC<PlazaProps> = ({ user }) => {
         </Alert>
       )}
 
-      {/* Create Post - Twitter-like Composition */}
+      {/* Create Post - Refined Design */}
       {user && (
-        <Card className="bg-white border border-[#ECECEC] p-6">
-          <div className="flex space-x-4">
-            <Avatar className="w-12 h-12 border border-gray-200">
+        <div className="bg-white/95 backdrop-blur-sm rounded-2xl p-6 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100/50 hover:shadow-[0_4px_12px_rgba(0,0,0,0.06)] transition-shadow duration-300">
+          <div className="flex gap-4">
+            <Avatar className="w-11 h-11 flex-shrink-0 ring-2 ring-indigo-50">
               {(user.avatar_url || user.avatar) && (
                 <AvatarImage src={user.avatar_url || user.avatar} alt={`@${user.username}`} />
               )}
-              <AvatarFallback className="bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold">
+              <AvatarFallback className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-semibold text-sm">
                 {user.username ? user.username[0].toUpperCase() : 'U'}
               </AvatarFallback>
             </Avatar>
-            <div className="flex-1">
+            <div className="flex-1 space-y-4">
               <Textarea
-                placeholder="What's happening in the meme universe? 🚀"
+                placeholder="Share your thoughts with the community..."
                 value={newPost}
                 onChange={(e) => setNewPost(e.target.value)}
-                className="bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-500 min-h-[120px] resize-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-indigo-50/30 border border-gray-100 text-gray-900 placeholder:text-gray-400 min-h-[110px] resize-none focus:outline-none focus:border-indigo-300 focus:bg-indigo-50/50 focus:ring-2 focus:ring-indigo-100/50 px-4 py-3 rounded-xl font-['Inter',_'Roboto',_-apple-system,_BlinkMacSystemFont,_'SF_Pro_Text',_sans-serif] text-[15px] leading-relaxed transition-all duration-200 hover:bg-indigo-50/40"
                 maxLength={280}
               />
-              <div className="flex items-center justify-between mt-4">
-                <div className="flex items-center space-x-4">
-                  <span className="text-sm text-gray-600">
-                    {280 - newPost.length} characters remaining
-                  </span>
-                  {user.username && (
-                    <Badge variant="outline" className="text-xs bg-blue-50 border-blue-200 text-blue-700">
-                      Posted as @{user.username}
-                    </Badge>
-                  )}
+              
+              <div className="flex items-center justify-between">
+                {/* Character limit indicator with clear label */}
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 font-medium">Characters:</span>
+                    <span className={`text-sm font-semibold transition-colors ${
+                      newPost.length > 250 ? 'text-rose-500' : 
+                      newPost.length > 200 ? 'text-amber-500' : 
+                      'text-gray-600'
+                    }`}>
+                      {newPost.length}/280
+                    </span>
+                  </div>
+                  
+                  {/* Visual indicator bar */}
+                  <div className="flex items-center gap-2">
+                    <div className="w-20 h-1.5 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+                      <div 
+                        className={`h-full transition-all duration-300 rounded-full ${
+                          newPost.length > 250 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 
+                          newPost.length > 200 ? 'bg-gradient-to-r from-amber-400 to-amber-500' : 
+                          newPost.length > 0 ? 'bg-gradient-to-r from-indigo-400 to-indigo-500' : 'bg-gray-200'
+                        }`}
+                        style={{ width: `${Math.min((newPost.length / 280) * 100, 100)}%` }}
+                      />
+                    </div>
+                    {newPost.length > 250 && (
+                      <span className="text-xs text-rose-500 font-medium animate-pulse">
+                        {280 - newPost.length} left
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <Button
-                  onClick={handleCreatePost}
-                  disabled={!newPost.trim() || posting || !user?.id}
-                  className="bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-semibold px-6"
-                >
-                  <Send className="w-4 h-4 mr-2" />
-                  {posting ? 'Posting...' : 'Post to Plaza'}
-                </Button>
+                
+                <div className="flex items-center gap-3">
+                  {user.username && (
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50/50 rounded-lg border border-indigo-100/50">
+                      <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse"></div>
+                      <span className="text-xs text-indigo-600 font-medium">
+                        @{user.username}
+                      </span>
+                    </div>
+                  )}
+                  <Button
+                    onClick={handleCreatePost}
+                    disabled={!newPost.trim() || posting || !user?.id || newPost.length > 280}
+                    className="bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed text-white font-semibold px-7 py-2.5 rounded-xl text-sm transition-all duration-200 shadow-[0_2px_4px_rgba(0,0,0,0.1)] hover:shadow-[0_4px_8px_rgba(0,0,0,0.15)] flex items-center gap-2"
+                  >
+                    {posting ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <span>Posting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        <span>Post</span>
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
-        </Card>
+        </div>
       )}
 
       {/* Tabbed Posts Feed */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-2 bg-gray-100">
-          <TabsTrigger value="ranked" className="text-gray-700 data-[state=active]:bg-orange-500 data-[state=active]:text-white">
+        <TabsList className="grid w-full grid-cols-2 bg-gray-50 rounded-lg p-1">
+          <TabsTrigger value="ranked" className="text-gray-600 font-medium data-[state=active]:text-indigo-700 data-[state=active]:bg-white data-[state=active]:shadow-sm rounded-md py-2.5 transition-all duration-200">
             <Flame className="w-4 h-4 mr-2" />
-            Ranked
+            Trending Posts
           </TabsTrigger>
-          <TabsTrigger value="followed" className="text-gray-700 data-[state=active]:bg-blue-500 data-[state=active]:text-white">
+          <TabsTrigger value="followed" className="text-gray-600 font-medium data-[state=active]:text-indigo-700 data-[state=active]:bg-white data-[state=active]:shadow-sm rounded-md py-2.5 transition-all duration-200">
             <Users className="w-4 h-4 mr-2" />
-            Followed
+            Following Feed
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="ranked" className="space-y-4">
           {getRankedPosts().length === 0 ? (
-            <Card className="bg-white border border-[#ECECEC] p-8 text-center">
-              <Flame className="w-12 h-12 text-orange-600 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Trending Content</h3>
-              <p className="text-gray-600">
-                Discover the hottest posts ranked by engagement and trending metrics. Posts appear here when the community is active.
+            <div className="bg-white rounded-xl p-12 text-center shadow-sm border border-gray-100">
+              <Flame className="w-12 h-12 text-indigo-500 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-800 mb-2 font-['Inter',_'Roboto',_-apple-system,_BlinkMacSystemFont,_'SF_Pro_Text',_sans-serif]">No trending posts yet</h3>
+              <p className="text-sm text-gray-600 font-['Inter',_'Roboto',_-apple-system,_BlinkMacSystemFont,_'SF_Pro_Text',_sans-serif]">
+                Be the first to share something with the community
               </p>
-            </Card>
+            </div>
           ) : (
-            getRankedPosts().map((post) => (
-              <Card key={post.id} className="bg-white border border-[#ECECEC] p-6 hover:border-gray-300 transition-all duration-300 relative">
-                {/* Ranking Badge */}
-                <div className="absolute top-4 right-4">
-                  <Badge variant="outline" className="text-xs bg-orange-50 border-orange-200 text-orange-700">
-                    <Star className="w-3 h-3 mr-1" />
-                    Trending
-                  </Badge>
-                </div>
-                
-                {/* Post Header */}
-                <div className="flex items-start space-x-4">
-                  <Avatar className="w-10 h-10 border border-gray-200">
-                    {post.author.avatar_url && (
-                      <AvatarImage src={post.author.avatar_url} alt={`@${post.author.username}`} />
-                    )}
-                    <AvatarFallback className="bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold">
-                      {getAvatarFallback(post.author.username)}
-                    </AvatarFallback>
-                  </Avatar>
-                  
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-semibold text-gray-900">{post.author.display_name || post.author.username}</span>
-                        <span className="text-gray-500">@{post.author.username}</span>
-                        <Badge variant="outline" className="text-xs bg-blue-50 border-blue-200 text-blue-700">
-                          ${post.author.token_symbol}
-                        </Badge>
-                        <span className="text-gray-400 text-sm">·</span>
-                        <span className="text-gray-400 text-sm">{formatTimeAgo(post.created_at)}</span>
+            getRankedPosts().map((post) => {
+              const isLiked = likedPosts.has(post.id);
+              const currentPrice = userProfile?.currentPrice ? Number(userProfile.currentPrice) / 1e9 : 0.001;
+              
+              return (
+                <article key={post.id} className="bg-white rounded-xl p-6 transition-all duration-200 hover:shadow-md shadow-sm border border-gray-100 font-['Inter',_'Roboto',_-apple-system,_BlinkMacSystemFont,_'SF_Pro_Text',_sans-serif]">
+                  {/* Header */}
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-start gap-3">
+                      <HoverCard openDelay={200} closeDelay={100}>
+                        <HoverCardTrigger asChild>
+                          <button className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-full">
+                            <Avatar className="w-10 h-10 ring-2 ring-white shadow-sm cursor-pointer transition-transform hover:scale-105">
+                              {post.author.avatar_url && (
+                                <AvatarImage src={post.author.avatar_url} alt={post.author.display_name || post.author.username} />
+                              )}
+                              <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white text-sm font-medium">
+                                {getAvatarFallback(post.author.username)}
+                              </AvatarFallback>
+                            </Avatar>
+                          </button>
+                        </HoverCardTrigger>
+                        <HoverCardContent 
+                          side="bottom" 
+                          align="start" 
+                          className="w-72 p-0 border-0 shadow-xl rounded-2xl overflow-hidden"
+                          sideOffset={8}
+                        >
+                          {/* Hover Card Content */}
+                          <div className="bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 p-[1px]">
+                            <div className="bg-white rounded-2xl p-5">
+                              {/* User Info */}
+                              <div className="flex items-center gap-3 mb-4">
+                                <Avatar className="w-12 h-12 ring-2 ring-white shadow-md">
+                                  {post.author.avatar_url && (
+                                    <AvatarImage src={post.author.avatar_url} alt={post.author.display_name || post.author.username} />
+                                  )}
+                                  <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">
+                                    {getAvatarFallback(post.author.username)}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-semibold text-gray-900 truncate">{post.author.display_name || post.author.username}</p>
+                                  <p className="text-sm text-gray-500">@{post.author.username}</p>
+                                </div>
+                              </div>
+
+                              {/* Token Price */}
+                              <div className="bg-gray-50 rounded-xl p-3 mb-4">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-xs font-medium text-gray-600">Share Price</span>
+                                  <span className="text-xs text-green-600">+12.5%</span>
+                                </div>
+                                <div className="flex items-baseline gap-1">
+                                  <span className="text-2xl font-bold text-gray-900">
+                                    {formatPrice(currentPrice)}
+                                  </span>
+                                  <span className="text-sm font-medium text-gray-600">SUI</span>
+                                </div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {userProfile?.followerCount || 0} holders
+                                </div>
+                              </div>
+
+                              {/* Action Buttons */}
+                              <div className="flex gap-2">
+                                <Button 
+                                  variant="outline"
+                                  className="flex-1 h-10 rounded-xl font-medium border-gray-200 hover:bg-gray-50"
+                                >
+                                  Follow
+                                </Button>
+                                <Button 
+                                  onClick={() => followUser?.(post.author.id, post.author.id, userProfile?.followerCount || 0)}
+                                  className="flex-1 h-10 rounded-xl font-medium bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white border-0"
+                                >
+                                  Buy
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </HoverCardContent>
+                      </HoverCard>
+
+                      <div className="flex-1 min-w-0">
+                        <HoverCard openDelay={200} closeDelay={100}>
+                          <HoverCardTrigger asChild>
+                            <button className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg px-1 -mx-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-gray-900 hover:underline">
+                                  {post.author.display_name || post.author.username}
+                                </span>
+                                <span className="text-gray-500 text-sm">
+                                  @{post.author.username}
+                                </span>
+                                <span className="text-gray-400 text-sm">·</span>
+                                <span className="text-gray-500 text-sm">
+                                  {formatTimeAgo(post.created_at)}
+                                </span>
+                              </div>
+                            </button>
+                          </HoverCardTrigger>
+                          {/* Reuse the same hover card content */}
+                          <HoverCardContent 
+                            side="bottom" 
+                            align="start" 
+                            className="w-72 p-0 border-0 shadow-xl rounded-2xl overflow-hidden"
+                            sideOffset={8}
+                          >
+                            <div className="bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 p-[1px]">
+                              <div className="bg-white rounded-2xl p-5">
+                                <div className="flex items-center gap-3 mb-4">
+                                  <Avatar className="w-12 h-12 ring-2 ring-white shadow-md">
+                                    {post.author.avatar_url && (
+                                      <AvatarImage src={post.author.avatar_url} alt={post.author.display_name || post.author.username} />
+                                    )}
+                                    <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">
+                                      {getAvatarFallback(post.author.username)}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-semibold text-gray-900 truncate">{post.author.display_name || post.author.username}</p>
+                                    <p className="text-sm text-gray-500">@{post.author.username}</p>
+                                  </div>
+                                </div>
+                                <div className="bg-gray-50 rounded-xl p-3 mb-4">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs font-medium text-gray-600">Share Price</span>
+                                    <span className="text-xs text-green-600">+12.5%</span>
+                                  </div>
+                                  <div className="flex items-baseline gap-1">
+                                    <span className="text-2xl font-bold text-gray-900">
+                                      {formatPrice(currentPrice)}
+                                    </span>
+                                    <span className="text-sm font-medium text-gray-600">SUI</span>
+                                  </div>
+                                  <div className="text-xs text-gray-500 mt-1">
+                                    {userProfile?.followerCount || 0} holders
+                                  </div>
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button 
+                                    variant="outline"
+                                    className="flex-1 h-10 rounded-xl font-medium border-gray-200 hover:bg-gray-50"
+                                  >
+                                    Follow
+                                  </Button>
+                                  <Button 
+                                    onClick={() => followUser?.(post.author.id, post.author.id, userProfile?.followerCount || 0)}
+                                    className="flex-1 h-10 rounded-xl font-medium bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white border-0"
+                                  >
+                                    Buy
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </HoverCardContent>
+                        </HoverCard>
                       </div>
-                      {post.author.username !== user?.username && (
-                        <FollowButton
-                          targetUserId={post.author.id}
-                          targetUsername={post.author.username}
-                          targetMarketId={post.author.id} // Using author ID as placeholder for market ID
-                          targetSupply={0} // Would fetch actual follower count
-                          size="sm"
-                          showPrice={false}
-                        />
-                      )}
                     </div>
-                    
-                    {/* Post Content */}
-                    <div className="text-gray-800 leading-relaxed mb-4">
-                      {post.content}
-                    </div>
-                    
-                    {/* Post Actions */}
-                    <div className="flex items-center space-x-6 text-gray-500">
-                      <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-pink-600 hover:bg-pink-50">
-                        <Heart className="w-4 h-4" />
-                        <span className="text-sm">{post.likes_count}</span>
-                      </Button>
-                      
-                      <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-blue-600 hover:bg-blue-50">
-                        <MessageCircle className="w-4 h-4" />
-                        <span className="text-sm">{post.comments_count}</span>
-                      </Button>
-                      
-                      <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-green-600 hover:bg-green-50">
-                        <Repeat2 className="w-4 h-4" />
-                        <span className="text-sm">{post.reposts_count}</span>
-                      </Button>
-                      
-                      <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-blue-600 hover:bg-blue-50">
-                        <Share className="w-4 h-4" />
-                      </Button>
-                      
-                      {/* Token Performance Indicator */}
-                      <div className="ml-auto flex items-center space-x-1 text-green-600">
-                        <TrendingUp className="w-3 h-3" />
-                        <span className="text-xs">+5.2%</span>
-                      </div>
-                    </div>
+
+                    {/* More Options */}
+                    <button className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
                   </div>
-                </div>
-              </Card>
-            ))
+
+                  {/* Content */}
+                  <div className="mb-4 text-gray-900 text-[15px] leading-relaxed">
+                    {post.content}
+                  </div>
+
+                  {/* Interaction Bar - Right Aligned */}
+                  <div className="flex items-center justify-end gap-1">
+                    {/* Like Button */}
+                    <button
+                      onClick={() => handleLikePost(post.id)}
+                      className={`
+                        group flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all duration-200
+                        ${isLiked 
+                          ? 'text-pink-600 bg-pink-50 hover:bg-pink-100' 
+                          : 'text-gray-600 hover:text-pink-600 hover:bg-gray-50'
+                        }
+                      `}
+                    >
+                      <Heart 
+                        className={`w-4 h-4 transition-all duration-200 ${
+                          isLiked ? 'fill-current scale-110' : 'group-hover:scale-110'
+                        }`} 
+                      />
+                      <span className="text-sm font-medium">
+                        {post.likes_count || 0}
+                      </span>
+                    </button>
+
+                    {/* Comment Button */}
+                    <button
+                      className="group flex items-center gap-2 px-3 py-1.5 text-gray-600 hover:text-blue-600 hover:bg-gray-50 rounded-xl transition-all duration-200"
+                    >
+                      <MessageCircle className="w-4 h-4 group-hover:scale-110 transition-transform duration-200" />
+                      <span className="text-sm font-medium">
+                        {post.comments_count || 0}
+                      </span>
+                    </button>
+                  </div>
+                </article>
+              );
+            })
           )}
         </TabsContent>
 
         <TabsContent value="followed" className="space-y-4">
           {getFollowedPosts().length === 0 ? (
-            <Card className="bg-white border border-[#ECECEC] p-8 text-center">
-              <Users className="w-12 h-12 text-blue-600 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Following Feed</h3>
-              <p className="text-gray-600 mb-4">
-                Posts from accounts you follow will appear here. Start following other users to see their content!
+            <div className="bg-white rounded-xl p-12 text-center shadow-sm border border-gray-100">
+              <Users className="w-12 h-12 text-indigo-500 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-800 mb-2 font-['Inter',_'Roboto',_-apple-system,_BlinkMacSystemFont,_'SF_Pro_Text',_sans-serif]">Your feed is empty</h3>
+              <p className="text-sm text-gray-600 font-['Inter',_'Roboto',_-apple-system,_BlinkMacSystemFont,_'SF_Pro_Text',_sans-serif]">
+                Follow other users to see their posts here
               </p>
-              <p className="text-gray-500 text-sm">
-                You're following {followingList.length} accounts
-              </p>
-            </Card>
+              {followingList.length > 0 && (
+                <div className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-50 rounded-lg">
+                  <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
+                  <p className="text-xs text-indigo-700 font-medium">
+                    Following {followingList.length} {followingList.length === 1 ? 'account' : 'accounts'}
+                  </p>
+                </div>
+              )}
+            </div>
           ) : (
-            getFollowedPosts().map((post) => (
-              <Card key={post.id} className="bg-white border border-[#ECECEC] p-6 hover:border-gray-300 transition-all duration-300 relative">
-                {/* Following Badge */}
-                <div className="absolute top-4 right-4">
-                  <Badge variant="outline" className="text-xs bg-blue-50 border-blue-200 text-blue-700">
-                    <Users className="w-3 h-3 mr-1" />
-                    Following
-                  </Badge>
-                </div>
-                
-                {/* Post Header */}
-                <div className="flex items-start space-x-4">
-                  <Avatar className="w-10 h-10 border border-gray-200">
-                    {post.author.avatar_url && (
-                      <AvatarImage src={post.author.avatar_url} alt={`@${post.author.username}`} />
-                    )}
-                    <AvatarFallback className="bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold">
-                      {getAvatarFallback(post.author.username)}
-                    </AvatarFallback>
-                  </Avatar>
-                  
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-semibold text-gray-900">{post.author.display_name || post.author.username}</span>
-                        <span className="text-gray-500">@{post.author.username}</span>
-                        <Badge variant="outline" className="text-xs bg-blue-50 border-blue-200 text-blue-700">
-                          ${post.author.token_symbol}
-                        </Badge>
-                        <span className="text-gray-400 text-sm">·</span>
-                        <span className="text-gray-400 text-sm">{formatTimeAgo(post.created_at)}</span>
+            getFollowedPosts().map((post) => {
+              const isLiked = likedPosts.has(post.id);
+              const currentPrice = userProfile?.currentPrice ? Number(userProfile.currentPrice) / 1e9 : 0.001;
+              
+              return (
+                <article key={post.id} className="bg-white rounded-xl p-6 transition-all duration-200 hover:shadow-md shadow-sm border border-gray-100 font-['Inter',_'Roboto',_-apple-system,_BlinkMacSystemFont,_'SF_Pro_Text',_sans-serif]">
+                  {/* Header */}
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-start gap-3">
+                      <HoverCard openDelay={200} closeDelay={100}>
+                        <HoverCardTrigger asChild>
+                          <button className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-full">
+                            <Avatar className="w-10 h-10 ring-2 ring-white shadow-sm cursor-pointer transition-transform hover:scale-105">
+                              {post.author.avatar_url && (
+                                <AvatarImage src={post.author.avatar_url} alt={post.author.display_name || post.author.username} />
+                              )}
+                              <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white text-sm font-medium">
+                                {getAvatarFallback(post.author.username)}
+                              </AvatarFallback>
+                            </Avatar>
+                          </button>
+                        </HoverCardTrigger>
+                        <HoverCardContent 
+                          side="bottom" 
+                          align="start" 
+                          className="w-72 p-0 border-0 shadow-xl rounded-2xl overflow-hidden"
+                          sideOffset={8}
+                        >
+                          {/* Hover Card Content */}
+                          <div className="bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 p-[1px]">
+                            <div className="bg-white rounded-2xl p-5">
+                              {/* User Info */}
+                              <div className="flex items-center gap-3 mb-4">
+                                <Avatar className="w-12 h-12 ring-2 ring-white shadow-md">
+                                  {post.author.avatar_url && (
+                                    <AvatarImage src={post.author.avatar_url} alt={post.author.display_name || post.author.username} />
+                                  )}
+                                  <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">
+                                    {getAvatarFallback(post.author.username)}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-semibold text-gray-900 truncate">{post.author.display_name || post.author.username}</p>
+                                  <p className="text-sm text-gray-500">@{post.author.username}</p>
+                                </div>
+                              </div>
+
+                              {/* Token Price */}
+                              <div className="bg-gray-50 rounded-xl p-3 mb-4">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-xs font-medium text-gray-600">Share Price</span>
+                                  <span className="text-xs text-green-600">+12.5%</span>
+                                </div>
+                                <div className="flex items-baseline gap-1">
+                                  <span className="text-2xl font-bold text-gray-900">
+                                    {formatPrice(currentPrice)}
+                                  </span>
+                                  <span className="text-sm font-medium text-gray-600">SUI</span>
+                                </div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {userProfile?.followerCount || 0} holders
+                                </div>
+                              </div>
+
+                              {/* Action Buttons */}
+                              <div className="flex gap-2">
+                                <Button 
+                                  variant="outline"
+                                  className="flex-1 h-10 rounded-xl font-medium border-gray-200 hover:bg-gray-50"
+                                >
+                                  Following
+                                </Button>
+                                <Button 
+                                  onClick={() => followUser?.(post.author.id, post.author.id, userProfile?.followerCount || 0)}
+                                  className="flex-1 h-10 rounded-xl font-medium bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white border-0"
+                                >
+                                  Buy
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </HoverCardContent>
+                      </HoverCard>
+
+                      <div className="flex-1 min-w-0">
+                        <HoverCard openDelay={200} closeDelay={100}>
+                          <HoverCardTrigger asChild>
+                            <button className="text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg px-1 -mx-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-gray-900 hover:underline">
+                                  {post.author.display_name || post.author.username}
+                                </span>
+                                <span className="text-gray-500 text-sm">
+                                  @{post.author.username}
+                                </span>
+                                <span className="text-gray-400 text-sm">·</span>
+                                <span className="text-gray-500 text-sm">
+                                  {formatTimeAgo(post.created_at)}
+                                </span>
+                              </div>
+                            </button>
+                          </HoverCardTrigger>
+                          {/* Reuse the same hover card content */}
+                          <HoverCardContent 
+                            side="bottom" 
+                            align="start" 
+                            className="w-72 p-0 border-0 shadow-xl rounded-2xl overflow-hidden"
+                            sideOffset={8}
+                          >
+                            <div className="bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 p-[1px]">
+                              <div className="bg-white rounded-2xl p-5">
+                                <div className="flex items-center gap-3 mb-4">
+                                  <Avatar className="w-12 h-12 ring-2 ring-white shadow-md">
+                                    {post.author.avatar_url && (
+                                      <AvatarImage src={post.author.avatar_url} alt={post.author.display_name || post.author.username} />
+                                    )}
+                                    <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">
+                                      {getAvatarFallback(post.author.username)}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-semibold text-gray-900 truncate">{post.author.display_name || post.author.username}</p>
+                                    <p className="text-sm text-gray-500">@{post.author.username}</p>
+                                  </div>
+                                </div>
+                                <div className="bg-gray-50 rounded-xl p-3 mb-4">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs font-medium text-gray-600">Share Price</span>
+                                    <span className="text-xs text-green-600">+12.5%</span>
+                                  </div>
+                                  <div className="flex items-baseline gap-1">
+                                    <span className="text-2xl font-bold text-gray-900">
+                                      {formatPrice(currentPrice)}
+                                    </span>
+                                    <span className="text-sm font-medium text-gray-600">SUI</span>
+                                  </div>
+                                  <div className="text-xs text-gray-500 mt-1">
+                                    {userProfile?.followerCount || 0} holders
+                                  </div>
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button 
+                                    variant="outline"
+                                    className="flex-1 h-10 rounded-xl font-medium border-gray-200 hover:bg-gray-50"
+                                  >
+                                    Following
+                                  </Button>
+                                  <Button 
+                                    onClick={() => followUser?.(post.author.id, post.author.id, userProfile?.followerCount || 0)}
+                                    className="flex-1 h-10 rounded-xl font-medium bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white border-0"
+                                  >
+                                    Buy
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </HoverCardContent>
+                        </HoverCard>
                       </div>
-                      {post.author.username !== user?.username && (
-                        <FollowButton
-                          targetUserId={post.author.id}
-                          targetUsername={post.author.username}
-                          targetMarketId={post.author.id} // Using author ID as placeholder for market ID
-                          targetSupply={0} // Would fetch actual follower count
-                          size="sm"
-                          showPrice={false}
-                        />
-                      )}
                     </div>
-                    
-                    {/* Post Content */}
-                    <div className="text-gray-800 leading-relaxed mb-4">
-                      {post.content}
-                    </div>
-                    
-                    {/* Post Actions */}
-                    <div className="flex items-center space-x-6 text-gray-500">
-                      <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-pink-600 hover:bg-pink-50">
-                        <Heart className="w-4 h-4" />
-                        <span className="text-sm">{post.likes_count}</span>
-                      </Button>
-                      
-                      <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-blue-600 hover:bg-blue-50">
-                        <MessageCircle className="w-4 h-4" />
-                        <span className="text-sm">{post.comments_count}</span>
-                      </Button>
-                      
-                      <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-green-600 hover:bg-green-50">
-                        <Repeat2 className="w-4 h-4" />
-                        <span className="text-sm">{post.reposts_count}</span>
-                      </Button>
-                      
-                      <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-blue-600 hover:bg-blue-50">
-                        <Share className="w-4 h-4" />
-                      </Button>
-                      
-                      {/* Token Performance Indicator */}
-                      <div className="ml-auto flex items-center space-x-1 text-green-600">
-                        <TrendingUp className="w-3 h-3" />
-                        <span className="text-xs">+5.2%</span>
-                      </div>
-                    </div>
+
+                    {/* More Options */}
+                    <button className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
                   </div>
-                </div>
-              </Card>
-            ))
+
+                  {/* Content */}
+                  <div className="mb-4 text-gray-900 text-[15px] leading-relaxed">
+                    {post.content}
+                  </div>
+
+                  {/* Interaction Bar - Right Aligned */}
+                  <div className="flex items-center justify-end gap-1">
+                    {/* Like Button */}
+                    <button
+                      onClick={() => handleLikePost(post.id)}
+                      className={`
+                        group flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all duration-200
+                        ${isLiked 
+                          ? 'text-pink-600 bg-pink-50 hover:bg-pink-100' 
+                          : 'text-gray-600 hover:text-pink-600 hover:bg-gray-50'
+                        }
+                      `}
+                    >
+                      <Heart 
+                        className={`w-4 h-4 transition-all duration-200 ${
+                          isLiked ? 'fill-current scale-110' : 'group-hover:scale-110'
+                        }`} 
+                      />
+                      <span className="text-sm font-medium">
+                        {post.likes_count || 0}
+                      </span>
+                    </button>
+
+                    {/* Comment Button */}
+                    <button
+                      className="group flex items-center gap-2 px-3 py-1.5 text-gray-600 hover:text-blue-600 hover:bg-gray-50 rounded-xl transition-all duration-200"
+                    >
+                      <MessageCircle className="w-4 h-4 group-hover:scale-110 transition-transform duration-200" />
+                      <span className="text-sm font-medium">
+                        {post.comments_count || 0}
+                      </span>
+                    </button>
+                  </div>
+                </article>
+              );
+            })
           )}
         </TabsContent>
       </Tabs>
-      
     </div>
   );
 };

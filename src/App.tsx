@@ -2,18 +2,21 @@ import { useState } from 'react';
 import { Button } from './components/ui/button';
 import { Card } from './components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from './components/ui/avatar';
-import { User, TrendingUp, Bell, Zap, Sparkles, LogOut, Settings, Home } from 'lucide-react';
+import { User, TrendingUp, Bell, Zap, Sparkles, LogOut, Settings, Home, ChevronLeft, ChevronRight, Menu } from 'lucide-react';
 import { AuthProvider, useAuth } from './components/AuthProvider';
 import { NetworkProvider } from './contexts/NetworkContext';
 import { Profile } from './components/Profile';
-import { TokenDashboard } from './components/TokenDashboard';
+import { Market } from './components/Market';
 import { Notifications } from './components/Notifications';
 import { NetworkSwitcher } from './components/NetworkSwitcher';
 import { Plaza } from './components/Plaza';
+import { NotificationProvider } from './contexts/NotificationContext';
+import { NotificationContainer } from './components/notifications/NotificationContainer';
 
 // Main App Content Component
 function AppContent() {
   const [activeView, setActiveView] = useState('plaza');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const { user, signOut } = useAuth();
 
   // Utility function to format wallet address for display
@@ -98,12 +101,25 @@ function AppContent() {
               {/* Main content area */}
               <div className="flex-1 flex">
                 {/* Clean White Sidebar */}
-                <div className="w-72 bg-white border-r border-[#ECECEC] py-8 px-6 flex flex-col shadow-sm">
+                <div className={`${isSidebarCollapsed ? 'w-20' : 'w-72'} bg-white border-r border-[#ECECEC] py-8 ${isSidebarCollapsed ? 'px-3' : 'px-6'} flex flex-col shadow-sm transition-all duration-300 ease-in-out relative`}>
+                  {/* Collapse Toggle Button */}
+                  <button
+                    onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                    className="absolute -right-3 top-10 bg-white border border-gray-200 rounded-full p-1.5 hover:bg-gray-50 transition-colors z-10 shadow-md"
+                    title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                  >
+                    {isSidebarCollapsed ? (
+                      <ChevronRight className="w-4 h-4 text-gray-600" />
+                    ) : (
+                      <ChevronLeft className="w-4 h-4 text-gray-600" />
+                    )}
+                  </button>
+
                   {/* User Identity Section */}
-                  <div className="mb-8 pb-8 border-b border-[#ECECEC]">
+                  <div className={`${isSidebarCollapsed ? 'mb-6 pb-6' : 'mb-8 pb-8'} border-b border-[#ECECEC]`}>
                     {/* User Profile */}
-                    <div className="flex items-center space-x-4 mb-4">
-                      <Avatar className="w-16 h-16 border-2 border-gray-200">
+                    <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'space-x-4'} mb-4`}>
+                      <Avatar className={`${isSidebarCollapsed ? 'w-10 h-10' : 'w-16 h-16'} border-2 border-gray-200`}>
                         {(user.avatar_url || user.avatar) && (
                           <AvatarImage src={user.avatar_url || user.avatar} alt={`@${user.username}`} />
                         )}
@@ -111,19 +127,21 @@ function AppContent() {
                           {user.username ? user.username[0].toUpperCase() : 'T'}
                         </AvatarFallback>
                       </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center space-x-2 mb-1">
-                          <h2 className="text-gray-900 font-semibold text-lg truncate">
-                            @{user.username || user.email?.split('@')[0]}
-                          </h2>
-                          <span className="text-blue-600 text-sm font-medium px-2 py-1 bg-blue-50 rounded">
-                            ${user.username?.toUpperCase() || 'TOKEN'}
-                          </span>
+                      {!isSidebarCollapsed && (
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center space-x-2 mb-1">
+                            <h2 className="text-gray-900 font-semibold text-lg truncate">
+                              @{user.username || user.email?.split('@')[0]}
+                            </h2>
+                            <span className="text-blue-600 text-sm font-medium px-2 py-1 bg-blue-50 rounded">
+                              ${user.username?.toUpperCase() || 'TOKEN'}
+                            </span>
+                          </div>
+                          <div className="text-gray-600 text-sm font-mono truncate">
+                            {formatWalletAddress(user.wallet_address || '0x1234...5678')}
+                          </div>
                         </div>
-                        <div className="text-gray-600 text-sm font-mono truncate">
-                          {formatWalletAddress(user.wallet_address || '0x1234...5678')}
-                        </div>
-                      </div>
+                      )}
                     </div>
                   </div>
                   
@@ -132,54 +150,58 @@ function AppContent() {
                     <Button
                       variant="ghost"
                       onClick={() => setActiveView('plaza')}
-                      className={`w-full justify-start text-left h-14 px-4 rounded-lg transition-all duration-150 ease-out active:scale-95 ${
+                      className={`w-full ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} text-left h-14 px-4 rounded-lg transition-all duration-150 ease-out active:scale-95 ${
                         activeView === 'plaza' 
                           ? 'bg-gray-200 text-gray-900' 
                           : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100 active:bg-gray-200'
                       }`}
+                      title={isSidebarCollapsed ? 'Plaza' : undefined}
                     >
-                      <Home className="w-6 h-6 mr-4" />
-                      <span className="text-lg font-medium">Plaza</span>
+                      <Home className={`w-6 h-6 ${isSidebarCollapsed ? '' : 'mr-4'}`} />
+                      {!isSidebarCollapsed && <span className="text-lg font-medium">Plaza</span>}
                     </Button>
                     
                     <Button
                       variant="ghost"
                       onClick={() => setActiveView('tokens')}
-                      className={`w-full justify-start text-left h-14 px-4 rounded-lg transition-all duration-150 ease-out active:scale-95 ${
+                      className={`w-full ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} text-left h-14 px-4 rounded-lg transition-all duration-150 ease-out active:scale-95 ${
                         activeView === 'tokens' 
                           ? 'bg-gray-200 text-gray-900' 
                           : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100 active:bg-gray-200'
                       }`}
+                      title={isSidebarCollapsed ? 'Markets' : undefined}
                     >
-                      <TrendingUp className="w-6 h-6 mr-4" />
-                      <span className="text-lg font-medium">Markets</span>
+                      <TrendingUp className={`w-6 h-6 ${isSidebarCollapsed ? '' : 'mr-4'}`} />
+                      {!isSidebarCollapsed && <span className="text-lg font-medium">Markets</span>}
                     </Button>
                     
                     <Button
                       variant="ghost"
                       onClick={() => setActiveView('profile')}
-                      className={`w-full justify-start text-left h-14 px-4 rounded-lg transition-all duration-150 ease-out active:scale-95 ${
+                      className={`w-full ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} text-left h-14 px-4 rounded-lg transition-all duration-150 ease-out active:scale-95 ${
                         activeView === 'profile' 
                           ? 'bg-gray-200 text-gray-900' 
                           : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100 active:bg-gray-200'
                       }`}
+                      title={isSidebarCollapsed ? 'Profile' : undefined}
                     >
-                      <User className="w-6 h-6 mr-4" />
-                      <span className="text-lg font-medium">Profile</span>
+                      <User className={`w-6 h-6 ${isSidebarCollapsed ? '' : 'mr-4'}`} />
+                      {!isSidebarCollapsed && <span className="text-lg font-medium">Profile</span>}
                     </Button>
 
                     <Button
                       variant="ghost"
                       onClick={() => setActiveView('notifications')}
-                      className={`w-full justify-start text-left h-14 px-4 rounded-lg transition-all duration-150 ease-out active:scale-95 relative ${
+                      className={`w-full ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} text-left h-14 px-4 rounded-lg transition-all duration-150 ease-out active:scale-95 relative ${
                         activeView === 'notifications' 
                           ? 'bg-gray-200 text-gray-900' 
                           : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100 active:bg-gray-200'
                       }`}
+                      title={isSidebarCollapsed ? 'Notifications' : undefined}
                     >
-                      <Bell className="w-6 h-6 mr-4" />
-                      <span className="text-lg font-medium">Notifications</span>
-                      <div className="absolute top-3 right-3 w-2 h-2 bg-blue-500 rounded-full"></div>
+                      <Bell className={`w-6 h-6 ${isSidebarCollapsed ? '' : 'mr-4'}`} />
+                      {!isSidebarCollapsed && <span className="text-lg font-medium">Notifications</span>}
+                      <div className={`absolute ${isSidebarCollapsed ? 'top-2 right-2' : 'top-3 right-3'} w-2 h-2 bg-blue-500 rounded-full`}></div>
                     </Button>
                   </nav>
 
@@ -188,14 +210,15 @@ function AppContent() {
                     <Button
                       variant="ghost"
                       onClick={() => setActiveView('network')}
-                      className={`w-full justify-start text-left h-14 px-4 rounded-lg transition-all duration-150 ease-out active:scale-95 ${
+                      className={`w-full ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} text-left h-14 px-4 rounded-lg transition-all duration-150 ease-out active:scale-95 ${
                         activeView === 'network' 
                           ? 'bg-gray-200 text-gray-900' 
                           : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100 active:bg-gray-200'
                       }`}
+                      title={isSidebarCollapsed ? 'Settings' : undefined}
                     >
-                      <Settings className="w-6 h-6 mr-4" />
-                      <span className="text-lg font-medium">Settings</span>
+                      <Settings className={`w-6 h-6 ${isSidebarCollapsed ? '' : 'mr-4'}`} />
+                      {!isSidebarCollapsed && <span className="text-lg font-medium">Settings</span>}
                     </Button>
                     
                     <Button
@@ -205,10 +228,11 @@ function AppContent() {
                           signOut();
                         }
                       }}
-                      className="w-full justify-start text-left h-14 px-4 rounded-lg text-red-600 hover:text-red-700 hover:bg-red-50 active:bg-red-100 transition-all duration-150 ease-out active:scale-95"
+                      className={`w-full ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} text-left h-14 px-4 rounded-lg text-red-600 hover:text-red-700 hover:bg-red-50 active:bg-red-100 transition-all duration-150 ease-out active:scale-95`}
+                      title={isSidebarCollapsed ? 'Sign Out' : undefined}
                     >
-                      <LogOut className="w-6 h-6 mr-4" />
-                      <span className="text-lg font-medium">Sign Out</span>
+                      <LogOut className={`w-6 h-6 ${isSidebarCollapsed ? '' : 'mr-4'}`} />
+                      {!isSidebarCollapsed && <span className="text-lg font-medium">Sign Out</span>}
                     </Button>
                   </div>
                   
@@ -218,11 +242,11 @@ function AppContent() {
                   </div>
                 </div>
 
-                {/* Main content - Secondary Light Background */}
+                {/* Main content - Full Width for Market */}
                 <div className="flex-1 p-6 bg-[#F8F9FA]">
-                  <div className="max-w-4xl mx-auto">
+                  <div className={activeView === 'tokens' ? '' : 'max-w-4xl mx-auto'}>
                     {activeView === 'plaza' && <Plaza user={user} />}
-                    {activeView === 'tokens' && <TokenDashboard user={user} />}
+                    {activeView === 'tokens' && <Market user={user} />}
                     {activeView === 'profile' && <Profile user={user} />}
                     {activeView === 'network' && (
                       <div className="space-y-6">
@@ -253,7 +277,10 @@ function App() {
   return (
     <NetworkProvider>
       <AuthProvider>
-        <AppContent />
+        <NotificationProvider>
+          <AppContent />
+          <NotificationContainer />
+        </NotificationProvider>
       </AuthProvider>
     </NetworkProvider>
   );
