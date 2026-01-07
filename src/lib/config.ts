@@ -18,7 +18,7 @@ export const DEPLOYMENT_CONFIG = {
     network: 'devnet',
     rpcUrl: 'https://fullnode.devnet.sui.io:443',
     explorerUrl: 'https://suiscan.xyz/devnet',
-    packageId: '0x95e3f7ecaea5de9d9bb5b3f7b1883ce647f133afcd77433a2ea5bf5191985c56',
+    packageId: '0x5e60863e57204f2a2635fe799ab4e5b792ba6d487d1eaf723abecfa7ee49a19f',
     factoryId: '0x415f3576fdb53312e721ab4f520fd74767470431db3b8d369b195edb817d28d4',
     poolCreationCapId: '',
     deploymentTx: 'DvHB28nK5KwoUADcf7dVfGPFhAVhKXY2VWx3t5rJoPVY',

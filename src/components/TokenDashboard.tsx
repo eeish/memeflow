@@ -12,7 +12,7 @@ interface TokenDashboardProps {
 export const TokenDashboard: React.FC<TokenDashboardProps> = ({ user }) => {
   const [tokens, setTokens] = useState<any[]>([]);
   const [watchlist, setWatchlist] = useState<string[]>([]);
-  const [sortBy, setSortBy] = useState('marketCap');
+  const [sortBy, setSortBy] = useState('volume24h');
 
   useEffect(() => {
     fetchTokens();
@@ -47,8 +47,6 @@ export const TokenDashboard: React.FC<TokenDashboardProps> = ({ user }) => {
 
   const sortedTokens = [...tokens].sort((a, b) => {
     switch (sortBy) {
-      case 'marketCap':
-        return b.marketCap - a.marketCap;
       case 'change24h':
         return b.change24h - a.change24h;
       case 'volume24h':
@@ -101,12 +99,11 @@ export const TokenDashboard: React.FC<TokenDashboardProps> = ({ user }) => {
             </div>
             <div className="flex items-center space-x-2">
               <Filter className="w-4 h-4 text-gray-500" />
-              <select 
-                value={sortBy} 
+              <select
+                value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 className="bg-white border border-gray-300 text-gray-900 text-sm px-3 py-1 rounded focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
               >
-                <option value="marketCap">Market Cap</option>
                 <option value="change24h">24h Change</option>
                 <option value="volume24h">Volume</option>
                 <option value="holders">Holders</option>
@@ -152,7 +149,6 @@ export const TokenDashboard: React.FC<TokenDashboardProps> = ({ user }) => {
                     </div>
                     
                     <div className="text-right text-sm">
-                      <div className="text-gray-700">MCap: ${formatNumber(token.marketCap)}</div>
                       <div className="text-gray-600">Vol: ${formatNumber(token.volume24h)}</div>
                       <div className="text-gray-500">{token.holders} holders</div>
                     </div>
@@ -204,7 +200,6 @@ export const TokenDashboard: React.FC<TokenDashboardProps> = ({ user }) => {
                     
                     <div className="text-right">
                       <div className="text-gray-900 font-semibold">${token.price.toFixed(4)}</div>
-                      <div className="text-gray-700 text-sm">MCap: ${formatNumber(token.marketCap)}</div>
                       <div className="text-gray-600 text-sm">{token.holders} holders</div>
                     </div>
                   </div>

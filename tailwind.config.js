@@ -65,6 +65,7 @@ export default {
       },
       fontFamily: {
         sans: [
+          "Noto Sans",
           "-apple-system",
           "BlinkMacSystemFont",
           "Segoe UI",
@@ -75,6 +76,17 @@ export default {
           "Open Sans",
           "Helvetica Neue",
           "sans-serif",
+        ],
+        mono: [
+          "Roboto Mono",
+          "ui-monospace",
+          "SFMono-Regular",
+          "Menlo",
+          "Monaco",
+          "Consolas",
+          "Liberation Mono",
+          "Courier New",
+          "monospace",
         ],
       },
       keyframes: {

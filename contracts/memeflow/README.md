@@ -41,7 +41,7 @@ The following contracts were removed as they were unused:
 ## Deployment Status
 
 - **Devnet**: ✅ Deployed (social contracts only)
-  - Package ID: `0xe9a4a6d16ecc17b777b03c1feea09e72d67e7d11b4f64f72fef7a3080c008b7a`
+  - Package ID: `0x5e60863e57204f2a2635fe799ab4e5b792ba6d487d1eaf723abecfa7ee49a19f`
   - Social features are fully functional
 
 - **Testnet**: ⏳ Not deployed

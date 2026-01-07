@@ -1,302 +1,161 @@
-import React, { useState, useEffect } from 'react';
-import { Card } from './ui/card';
-import { Button } from './ui/button';
-import { Bell, X, Heart, MessageCircle, TrendingUp, Users } from 'lucide-react';
-import { apiService, type Notification } from '../lib/api';
+import { useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 
 interface NotificationsProps {
   user: any;
   onClose: () => void;
 }
 
-export const Notifications: React.FC<NotificationsProps> = ({ user, onClose }) => {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [filter, setFilter] = useState('all');
-  const [loading, setLoading] = useState(true);
+type NotificationType = 'like' | 'comment' | 'follow' | 'share_price';
 
-  useEffect(() => {
-    if (user?.id) {
-      fetchNotifications();
-    }
-  }, [user]);
+interface Notification {
+  id: string;
+  type: NotificationType;
+  user: string;
+  content: string;
+  timestamp: string;
+  read: boolean;
+}
 
-  const fetchNotifications = async () => {
-    if (!user?.id) return;
-    
-    try {
-      setLoading(true);
-      const response = await apiService.getUserNotifications(user.id);
-      
-      if (response.success && response.data) {
-        setNotifications(response.data);
-      } else {
-        console.error('Failed to fetch notifications:', response.error);
-      }
-    } catch (error) {
-      console.error('Failed to fetch notifications:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+const mockNotifications: Notification[] = [
+  {
+    id: '1',
+    type: 'like',
+    user: '0x9f...2a3b',
+    content: 'liked your post',
+    timestamp: '2m ago',
+    read: false,
+  },
+  {
+    id: '2',
+    type: 'follow',
+    user: '0x4c...8d9e',
+    content: 'started following you',
+    timestamp: '15m ago',
+    read: false,
+  },
+  {
+    id: '3',
+    type: 'comment',
+    user: '0x7b...3f1c',
+    content: 'commented on your post',
+    timestamp: '1h ago',
+    read: false,
+  },
+  {
+    id: '4',
+    type: 'share_price',
+    user: '0x2e...5a7d',
+    content: 'bought your shares',
+    timestamp: '2h ago',
+    read: true,
+  },
+  {
+    id: '5',
+    type: 'like',
+    user: '0x2e...5a7d',
+    content: 'liked your post',
+    timestamp: '3h ago',
+    read: true,
+  },
+  {
+    id: '6',
+    type: 'follow',
+    user: '0x8a...9c4b',
+    content: 'started following you',
+    timestamp: '5h ago',
+    read: true,
+  },
+  {
+    id: '7',
+    type: 'comment',
+    user: '0x1d...6e2f',
+    content: 'commented on your post',
+    timestamp: '1d ago',
+    read: true,
+  },
+  {
+    id: '8',
+    type: 'like',
+    user: '0x5f...4b8c',
+    content: 'liked your post',
+    timestamp: '1d ago',
+    read: true,
+  },
+  {
+    id: '9',
+    type: 'follow',
+    user: '0x3c...7a9f',
+    content: 'started following you',
+    timestamp: '2d ago',
+    read: true,
+  },
+  {
+    id: '10',
+    type: 'share_price',
+    user: '0x9e...4b2d',
+    content: 'sold your shares',
+    timestamp: '2d ago',
+    read: true,
+  },
+];
 
-  const markAsRead = async (notificationId: string) => {
-    try {
-      const response = await apiService.markNotificationRead(notificationId);
-      
-      if (response.success) {
-        setNotifications(notifications.map(notif => 
-          notif.id === notificationId ? { ...notif, is_read: true } : notif
-        ));
-      }
-    } catch (error) {
-      console.error('Failed to mark notification as read:', error);
-    }
-  };
-
-  const markAllAsRead = async () => {
-    try {
-      // Mark all unread notifications as read
-      const unreadNotifications = notifications.filter(n => !n.is_read);
-      
-      for (const notification of unreadNotifications) {
-        await apiService.markNotificationRead(notification.id);
-      }
-      
-      setNotifications(notifications.map(notif => ({ ...notif, is_read: true })));
-    } catch (error) {
-      console.error('Failed to mark all notifications as read:', error);
-    }
-  };
-
-  const filterNotifications = (type: string) => {
-    setFilter(type);
-  };
-
-  const formatTimeAgo = (dateString: string) => {
-    const now = new Date();
-    const date = new Date(dateString);
-    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
-    
-    if (diffInMinutes < 60) {
-      return `${diffInMinutes}m`;
-    } else if (diffInMinutes < 1440) {
-      return `${Math.floor(diffInMinutes / 60)}h`;
-    } else {
-      return `${Math.floor(diffInMinutes / 1440)}d`;
-    }
-  };
-
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case 'like':
-        return <Heart className="w-5 h-5 text-pink-600" />;
-      case 'comment':
-        return <MessageCircle className="w-5 h-5 text-blue-600" />;
-      case 'token_update':
-        return <TrendingUp className="w-5 h-5 text-green-600" />;
-      case 'follow':
-        return <Users className="w-5 h-5 text-purple-600" />;
-      case 'mention':
-        return <Bell className="w-5 h-5 text-yellow-600" />;
-      default:
-        return <Bell className="w-5 h-5 text-gray-500" />;
-    }
-  };
-
-  const filteredNotifications = filter === 'all' 
-    ? notifications 
-    : notifications.filter(notif => notif.notification_type === filter);
-
-  const unreadCount = notifications.filter(notif => !notif.is_read).length;
-
+export function Notifications({ onClose }: NotificationsProps) {
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900 flex items-center">
-          <Bell className="w-6 h-6 mr-2 text-blue-600" />
-          Notifications
-          {unreadCount > 0 && (
-            <span className="ml-2 px-2 py-1 text-xs bg-blue-500 text-white rounded-full">
-              {unreadCount}
-            </span>
-          )}
-        </h2>
-        <div className="flex items-center space-x-2">
-          {unreadCount > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={markAllAsRead}
-              className="text-blue-600 hover:text-blue-700"
-            >
-              Mark all read
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="border-b border-gray-200 bg-white sticky top-0 z-10">
+        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+          <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-700"
+            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+            aria-label="Back to feed"
           >
-            <X className="w-4 h-4" />
-          </Button>
+            <ArrowLeft className="h-5 w-5 text-gray-600" />
+          </button>
+          <h1 className="text-lg tracking-tight text-gray-900">Notifications</h1>
+          <div className="w-9" /> {/* Spacer for centering */}
         </div>
-      </div>
+      </header>
 
-      {/* Filter Tabs */}
-      <div className="flex items-center space-x-2 overflow-x-auto">
-        <Button
-          variant={filter === 'all' ? 'default' : 'ghost'}
-          size="sm"
-          onClick={() => filterNotifications('all')}
-          className={`whitespace-nowrap ${
-            filter === 'all' 
-              ? 'bg-blue-500 text-white' 
-              : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
-          }`}
-        >
-          All ({notifications.length})
-        </Button>
-        <Button
-          variant={filter === 'like' ? 'default' : 'ghost'}
-          size="sm"
-          onClick={() => filterNotifications('like')}
-          className={`whitespace-nowrap ${
-            filter === 'like' 
-              ? 'bg-pink-500 text-white' 
-              : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
-          }`}
-        >
-          <Heart className="w-4 h-4 mr-1" />
-          Likes
-        </Button>
-        <Button
-          variant={filter === 'comment' ? 'default' : 'ghost'}
-          size="sm"
-          onClick={() => filterNotifications('comment')}
-          className={`whitespace-nowrap ${
-            filter === 'comment' 
-              ? 'bg-blue-500 text-white' 
-              : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
-          }`}
-        >
-          <MessageCircle className="w-4 h-4 mr-1" />
-          Comments
-        </Button>
-        <Button
-          variant={filter === 'token' ? 'default' : 'ghost'}
-          size="sm"
-          onClick={() => filterNotifications('token')}
-          className={`whitespace-nowrap ${
-            filter === 'token' 
-              ? 'bg-green-500 text-white' 
-              : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
-          }`}
-        >
-          <TrendingUp className="w-4 h-4 mr-1" />
-          Tokens
-        </Button>
-        <Button
-          variant={filter === 'follow' ? 'default' : 'ghost'}
-          size="sm"
-          onClick={() => filterNotifications('follow')}
-          className={`whitespace-nowrap ${
-            filter === 'follow' 
-              ? 'bg-purple-500 text-white' 
-              : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
-          }`}
-        >
-          <Users className="w-4 h-4 mr-1" />
-          Follows
-        </Button>
-      </div>
-
-      {/* Notifications List */}
-      <div className="space-y-3">
-        {loading ? (
-          <Card className="bg-white border border-[#ECECEC] p-12 text-center">
-            <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading notifications...</p>
-          </Card>
-        ) : filteredNotifications.length > 0 ? (
-          filteredNotifications.map((notification) => (
-            <Card 
-              key={notification.id} 
-              className={`border p-4 cursor-pointer transition-all duration-300 ${
-                notification.is_read 
-                  ? 'bg-white border-[#ECECEC] hover:border-gray-300' 
-                  : 'bg-blue-50 border-blue-200 hover:border-blue-300'
+      <main className="max-w-2xl mx-auto px-4 py-6 space-y-3">
+        {mockNotifications.length === 0 ? (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-12 text-center">
+            <p className="text-gray-500 text-sm">No notifications yet</p>
+          </div>
+        ) : (
+          mockNotifications.map((notification) => (
+            <div
+              key={notification.id}
+              className={`bg-white rounded-lg shadow-sm border border-gray-100 p-4 hover:shadow-md transition-shadow ${
+                !notification.read ? 'bg-gray-50' : ''
               }`}
-              onClick={() => markAsRead(notification.id)}
             >
-              <div className="flex items-start space-x-4">
-                <div className="flex-shrink-0 pt-1">
-                  {getNotificationIcon(notification.notification_type)}
-                </div>
-                
+              <div className="flex items-center gap-3">
+                {/* Avatar */}
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-gray-300 to-gray-400 flex-shrink-0" />
+
+                {/* Content */}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h4 className={`text-sm font-semibold ${
-                        notification.is_read ? 'text-gray-600' : 'text-gray-900'
-                      }`}>
-                        {notification.title}
-                      </h4>
-                      <p className={`text-sm leading-relaxed mt-1 ${
-                        notification.is_read ? 'text-gray-500' : 'text-gray-700'
-                      }`}>
-                        {notification.content}
-                      </p>
-                    </div>
-                    
-                    <div className="flex items-center space-x-2 ml-4">
-                      <span className="text-xs text-gray-500 whitespace-nowrap">
-                        {formatTimeAgo(notification.created_at)}
-                      </span>
-                      {!notification.is_read && (
-                        <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                      )}
-                    </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-mono text-sm text-gray-900">
+                      {notification.user}
+                    </span>
+                    <span className="text-sm text-gray-600">{notification.content}</span>
                   </div>
+                  <p className="text-xs text-gray-400 mt-1">{notification.timestamp}</p>
                 </div>
               </div>
-            </Card>
+            </div>
           ))
-        ) : (
-          <Card className="bg-white border border-[#ECECEC] p-12 text-center">
-            <Bell className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-gray-700 mb-2">
-              {filter === 'all' ? 'No notifications yet' : `No ${filter} notifications`}
-            </h3>
-            <p className="text-gray-600">
-              {filter === 'all' 
-                ? "You'll see notifications about likes, comments, and token activity here"
-                : `You don't have any ${filter} notifications yet`
-              }
-            </p>
-          </Card>
         )}
-      </div>
 
-      {/* Quick Actions */}
-      {notifications.length > 0 && (
-        <Card className="bg-white border border-[#ECECEC] p-4">
-          <div className="flex items-center justify-between">
-            <div className="text-gray-600 text-sm">
-              Stay updated with the latest activity on your profile and tokens
-            </div>
-            <div className="flex items-center space-x-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-gray-500 hover:text-gray-700"
-              >
-                Settings
-              </Button>
-            </div>
+        {mockNotifications.length > 0 && (
+          <div className="text-center py-4">
+            <p className="text-xs text-gray-400">You're all caught up!</p>
           </div>
-        </Card>
-      )}
+        )}
+      </main>
     </div>
   );
-};
+}

@@ -174,7 +174,7 @@ export const SearchPage: React.FC<SearchPageProps> = () => {
                             </Badge>
                           </div>
                           <div className="text-white/60 text-sm">
-                            {formatNumber(token.holders)} holders • MCap ${formatNumber(token.marketCap)}
+                            {formatNumber(token.holders)} holders
                           </div>
                         </div>
                       </div>

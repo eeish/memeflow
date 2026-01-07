@@ -120,7 +120,8 @@ start_services() {
     if check_port 5173; then
         print_warning "Frontend already running on port 5173"
     else
-        npm run dev > logs/frontend.log 2>&1 &
+        # Bind dev server to all interfaces for remote access
+        npm run dev -- --host 0.0.0.0 > logs/frontend.log 2>&1 &
         FRONTEND_PID=$!
         echo $FRONTEND_PID > logs/frontend.pid
         
@@ -304,7 +305,7 @@ case "${1:-help}" in
     frontend)
         print_header
         print_cyan "Starting frontend only..."
-        npm run dev
+        npm run dev -- --host 0.0.0.0
         ;;
     backend)
         print_header

@@ -4,8 +4,9 @@
 
 MemeFlow contracts are currently deployed on **Sui Devnet** with the following addresses:
 
-- **Package ID**: `0xe9a4a6d16ecc17b777b03c1feea09e72d67e7d11b4f64f72fef7a3080c008b7a`
-- **Factory ID**: `0x5e2eb36dfb5a198658f2a10e98bd3246753d976c5f184ff51bba9b3f48de7bf7`
+- **Package ID**: `0x5e60863e57204f2a2635fe799ab4e5b792ba6d487d1eaf723abecfa7ee49a19f`
+- **Profile Registry ID**: `0xe5e152b3e6c7a29472007cfc40590cb0ea5d6317b2ebcc8ed7072a4c731fa265`
+- **Factory ID**: `0x415f3576fdb53312e721ab4f520fd74767470431db3b8d369b195edb817d28d4`
 - **Network**: Devnet
 - **RPC URL**: `https://fullnode.devnet.sui.io:443`
 
@@ -15,7 +16,7 @@ MemeFlow contracts are currently deployed on **Sui Devnet** with the following a
 
 If you see the error:
 ```
-Package object does not exist with ID 0xe9a4a6d16ecc17b777b03c1feea09e72d67e7d11b4f64f72fef7a3080c008b7a
+Package object does not exist with ID 0x5e60863e57204f2a2635fe799ab4e5b792ba6d487d1eaf723abecfa7ee49a19f
 ```
 
 This means your wallet is connected to a different network (likely Testnet or Mainnet).
@@ -68,7 +69,7 @@ You can verify your setup by:
 1. Opening the browser console (F12)
 2. Looking for logs that show:
    - `Profile - Current network: devnet`
-   - `Creating profile with: { network: "devnet", packageId: "0xe9a4..." }`
+   - `Creating profile with: { network: "devnet", packageId: "0x5e60..." }`
 
 ## Troubleshooting
 
