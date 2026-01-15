@@ -58,6 +58,8 @@ pub struct Post {
     pub author_id: Uuid,
     pub content: String,
     pub media_urls: Vec<String>,
+    pub content_blob_id: Option<String>,         // Walrus blob ID for protocol content
+    pub content_protocol_version: Option<String>, // Protocol version (e.g., "1.0")
     pub likes_count: i64,
     pub comments_count: i64,
     pub reposts_count: i64,
@@ -86,6 +88,7 @@ pub struct CreatePostRequest {
     pub author_id: String,
     pub content: String,
     pub media_urls: Option<Vec<String>>,
+    pub protocol_content: Option<ProtocolContent>, // Walrus protocol content
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,4 +240,66 @@ impl<T> ApiResponse<T> {
             message: None,
         }
     }
+}
+
+// ============================================================================
+// Media Upload Types (R2)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaUploadResponse {
+    pub file_key: String,
+    pub public_url: String,
+    pub content_type: String,
+    pub size_bytes: u64,
+    pub checksum: String,
+}
+
+// ============================================================================
+// Protocol Types
+// ============================================================================
+
+use std::collections::HashMap;
+
+/// User Content Protocol - canonical representation of post content
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolContent {
+    pub version: String,
+    #[serde(default = "default_protocol_name")]
+    pub protocol: String,
+    pub created_at: String,
+    pub content: ContentSection,
+    pub media: Vec<MediaReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, String>>,
+}
+
+fn default_protocol_name() -> String {
+    "memeflow-post".to_string()
+}
+
+/// Content section containing text and extracted entities
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentSection {
+    pub text: String,
+    #[serde(default)]
+    pub mentions: Vec<String>,
+    #[serde(default)]
+    pub hashtags: Vec<String>,
+}
+
+/// Media reference to a Walrus blob
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaReference {
+    pub blob_id: String,
+    pub content_type: String,
+    pub size_bytes: u64,
+    pub checksum: String,
+    pub order: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<f32>,
 }

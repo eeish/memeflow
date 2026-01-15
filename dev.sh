@@ -82,11 +82,31 @@ show_help() {
 # Function to check if port is in use
 check_port() {
     local port=$1
-    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null ; then
+    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1 ; then
         return 0
     else
         return 1
     fi
+}
+
+# Function to find next available port starting from given port
+find_available_port() {
+    local start_port=$1
+    local port=$start_port
+    local max_tries=100
+    local tries=0
+
+    while [ $tries -lt $max_tries ]; do
+        if ! check_port $port; then
+            echo $port
+            return 0
+        fi
+        port=$((port + 1))
+        tries=$((tries + 1))
+    done
+
+    echo ""
+    return 1
 }
 
 # Function to start services
@@ -117,27 +137,42 @@ start_services() {
     
     # Start frontend
     print_cyan "Starting frontend service (React + Vite)..."
-    if check_port 5173; then
-        print_warning "Frontend already running on port 5173"
-    else
-        # Bind dev server to all interfaces for remote access
-        npm run dev -- --host 0.0.0.0 > logs/frontend.log 2>&1 &
-        FRONTEND_PID=$!
-        echo $FRONTEND_PID > logs/frontend.pid
-        
-        sleep 2
-        if check_port 5173; then
-            print_success "Frontend started (PID: $FRONTEND_PID)"
-        else
-            print_error "Frontend failed to start"
-            return 1
+
+    # Vite will start on port 3001 or next available (3002, 3003, etc.)
+    npm run dev -- --host 0.0.0.0 > logs/frontend.log 2>&1 &
+    FRONTEND_PID=$!
+    echo $FRONTEND_PID > logs/frontend.pid
+
+    # Wait for Vite to start and write its port to the log
+    print_status "Waiting for Vite to initialize..."
+    FRONTEND_PORT=""
+    for i in {1..15}; do
+        sleep 1
+        # Parse Vite's log output to find the actual port
+        if [ -f "logs/frontend.log" ]; then
+            FRONTEND_PORT=$(grep -oP '(?<=localhost:)\d+' logs/frontend.log | head -1)
+            if [ -n "$FRONTEND_PORT" ]; then
+                break
+            fi
         fi
+    done
+
+    # Verify frontend is running
+    if [ -n "$FRONTEND_PORT" ] && kill -0 $FRONTEND_PID 2>/dev/null && check_port $FRONTEND_PORT; then
+        echo $FRONTEND_PORT > logs/frontend.port
+        print_success "Frontend started on port $FRONTEND_PORT (PID: $FRONTEND_PID)"
+    else
+        print_error "Frontend failed to start"
+        if [ -f "logs/frontend.log" ]; then
+            print_status "Check logs/frontend.log for details"
+        fi
+        return 1
     fi
-    
+
     echo ""
     print_success "🎉 MemeFlow development environment is running!"
     echo ""
-    print_cyan "Frontend: http://localhost:5173"
+    print_cyan "Frontend: http://localhost:$FRONTEND_PORT"
     print_cyan "Backend:  http://localhost:3001"
     print_cyan "API Docs: http://localhost:3001/health"
     echo ""
@@ -158,6 +193,7 @@ stop_services() {
             print_success "Frontend stopped (PID: $FRONTEND_PID)"
         fi
         rm -f logs/frontend.pid
+        rm -f logs/frontend.port
     fi
     
     # Stop backend
@@ -174,10 +210,14 @@ stop_services() {
         print_status "Killing remaining processes on port 3001..."
         lsof -ti:3001 | xargs kill -TERM 2>/dev/null || true
     fi
-    
-    if check_port 5173; then
-        print_status "Killing remaining processes on port 5173..."
-        lsof -ti:5173 | xargs kill -TERM 2>/dev/null || true
+
+    # Kill frontend on its actual port if tracked
+    if [ -f "logs/frontend.port" ]; then
+        FRONTEND_PORT=$(cat logs/frontend.port)
+        if check_port $FRONTEND_PORT; then
+            print_status "Killing remaining processes on port $FRONTEND_PORT..."
+            lsof -ti:$FRONTEND_PORT | xargs kill -TERM 2>/dev/null || true
+        fi
     fi
     
     print_success "All services stopped"
@@ -196,11 +236,28 @@ show_status() {
         print_error "Backend: Not running"
     fi
     
-    # Frontend status  
-    if check_port 5173; then
-        print_success "Frontend: Running on port 5173"
+    # Frontend status
+    if [ -f "logs/frontend.port" ]; then
+        FRONTEND_PORT=$(cat logs/frontend.port)
+        if check_port $FRONTEND_PORT; then
+            print_success "Frontend: Running on port $FRONTEND_PORT"
+        else
+            print_error "Frontend: Not running (expected on port $FRONTEND_PORT)"
+        fi
     else
-        print_error "Frontend: Not running"
+        # Check common ports 3001-3010
+        FOUND_PORT=""
+        for port in {3001..3010}; do
+            if check_port $port && ! pgrep -f "memeflow-service" > /dev/null; then
+                FOUND_PORT=$port
+                break
+            fi
+        done
+        if [ -n "$FOUND_PORT" ]; then
+            print_success "Frontend: Running on port $FOUND_PORT (not tracked)"
+        else
+            print_error "Frontend: Not running"
+        fi
     fi
     
     # Database status
@@ -305,6 +362,7 @@ case "${1:-help}" in
     frontend)
         print_header
         print_cyan "Starting frontend only..."
+        print_status "Frontend will start on port 3001 (or next available if occupied)"
         npm run dev -- --host 0.0.0.0
         ;;
     backend)

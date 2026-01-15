@@ -2,10 +2,8 @@ module memeflow::social_follow {
     use sui::balance::{Self, Balance};
     use sui::coin::{Self, Coin};
     use sui::event;
-    use sui::object::{Self};
     use sui::sui::SUI;
     use sui::table::{Self, Table};
-    use sui::transfer;
     use sui::tx_context::{Self as tx};
 
     /// =============================
@@ -231,7 +229,7 @@ module memeflow::social_follow {
         // 已关注则幂等返回（不消耗 payment）
         if (is_following(buyer_book, seller_market.owner)) {
             transfer::public_transfer(payment, caller);
-            return;
+            return
         };
 
         let price = price_mist_for_supply(seller_market.supply + 1);

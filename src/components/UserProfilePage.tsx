@@ -1,8 +1,8 @@
 import React from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Button } from './ui/button';
-import { Card } from './ui/card';
+import { Avatar, AvatarFallback, AvatarImage } from './ui-simple/Avatar';
+import { Button } from './ui-simple/Button';
+import { Card } from './ui-simple/Card';
 import type { UserSummary } from '../types/users.ts';
 
 interface UserProfilePageProps {

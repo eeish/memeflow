@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Card } from './ui/card';
-import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { Card } from './ui-simple/Card';
+import { Button } from './ui-simple/Button';
+import { Badge } from './ui-simple/Badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui-simple/Tabs';
 import { TrendingUp, TrendingDown, Eye, Star, Filter, Coins } from 'lucide-react';
 
 interface TokenDashboardProps {

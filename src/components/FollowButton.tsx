@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Button } from './ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
-import { Alert, AlertDescription } from './ui/alert';
-import { Badge } from './ui/badge';
+import { Button } from './ui-simple/Button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui-simple/Dialog';
+import { Alert, AlertDescription } from './ui-simple/Alert';
+import { Badge } from './ui-simple/Badge';
 import { UserPlus, UserMinus, Loader2, Sparkles, DollarSign } from 'lucide-react';
 import { useSocialFollow } from '../hooks/useSocialFollow';
 

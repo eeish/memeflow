@@ -30,6 +30,8 @@ export interface Post {
   author_id: string;
   content: string;
   media_urls: string[];
+  content_blob_id?: string;
+  content_protocol_version?: string;
   likes_count: number;
   comments_count: number;
   reposts_count: number;
@@ -42,6 +44,8 @@ export interface PostWithAuthor {
   author_id: string;
   content: string;
   media_urls: string[];
+  content_blob_id?: string;
+  content_protocol_version?: string;
   likes_count: number;
   comments_count: number;
   reposts_count: number;
@@ -65,6 +69,15 @@ export interface FollowStatusResponse {
   is_following: boolean;
   followers_count: number;
   following_count: number;
+}
+
+// Media upload types (R2)
+export interface MediaUploadResponse {
+  file_key: string;
+  public_url: string;
+  content_type: string;
+  size_bytes: number;
+  checksum: string;
 }
 
 export interface ApiResponse<T> {
@@ -200,10 +213,82 @@ class ApiService {
     return this.request<UserProfile[]>(`/search/users?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`);
   }
 
+  // Media upload endpoints (R2)
+  async uploadMedia(file: File, userId: string): Promise<ApiResponse<MediaUploadResponse>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('user_id', userId);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/media/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Media upload failed:', error);
+      throw error;
+    }
+  }
+
+  async batchUploadMedia(files: File[], userId: string): Promise<ApiResponse<MediaUploadResponse[]>> {
+    console.log('🔍 batchUploadMedia called with:', {
+      fileCount: files.length,
+      userId,
+      files: files.map(f => ({name: f.name, type: f.type, size: f.size}))
+    });
+
+    const formData = new FormData();
+
+    files.forEach((file, index) => {
+      formData.append(`file_${index}`, file);
+    });
+    formData.append('user_id', userId);
+
+    console.log('📦 FormData contents:');
+    for (let [key, value] of formData.entries()) {
+      console.log(key, value);
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/media/batch-upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Batch upload failed:', error);
+      throw error;
+    }
+  }
+
   // Health check
   async healthCheck(): Promise<ApiResponse<string>> {
     return this.request<string>('/health');
   }
+}
+
+// Utility functions for protocol content
+export function extractMentions(text: string): string[] {
+  const mentionRegex = /@(\w+)/g;
+  const matches = text.matchAll(mentionRegex);
+  return Array.from(matches, m => m[1]);
+}
+
+export function extractHashtags(text: string): string[] {
+  const hashtagRegex = /#(\w+)/g;
+  const matches = text.matchAll(hashtagRegex);
+  return Array.from(matches, m => m[1]);
 }
 
 export const apiService = new ApiService();

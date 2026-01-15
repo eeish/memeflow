@@ -1,10 +1,8 @@
 /// MemeFlow Social Integration Module
 /// This module provides integration between MemeFlow tokens and social following mechanics
 module memeflow::memeflow_social {
-    use std::option;
     use sui::coin::{Self, Coin};
     use sui::event;
-    use sui::object;
     use sui::table::{Self, Table};
     use sui::tx_context::{Self as tx};
     use sui::sui::SUI;
@@ -36,6 +34,12 @@ module memeflow::memeflow_social {
         owner: address,
         token_id: address,
         token_symbol: vector<u8>,
+    }
+
+    /// Emitted when a user publishes a post (encoded text payload)
+    public struct PostCreated has copy, drop {
+        author: address,
+        content: vector<u8>,
     }
 
     /// =============================
@@ -92,19 +96,18 @@ module memeflow::memeflow_social {
     /// =============================
     
     /// Create a complete MemeFlow profile with social features
+    /// Only requires a username (token name) - cannot be changed later
     public entry fun create_memeflow_profile(
         username: vector<u8>,
-        bio: vector<u8>,
-        avatar_url: vector<u8>,
         registry: &mut ProfileRegistry,
         ctx: &mut TxContext,
     ) {
         let sender = tx::sender(ctx);
-        
+
         // Create underlying social components
         social_follow::create_profile(ctx);
-        
-        // Create MemeFlow profile
+
+        // Create MemeFlow profile with username as token name
         let profile = MemeFlowProfile {
             id: object::new(ctx),
             owner: sender,
@@ -115,16 +118,16 @@ module memeflow::memeflow_social {
             follower_count: 0,
             following_count: 0,
             username,
-            bio,
-            avatar_url,
+            bio: vector::empty(),
+            avatar_url: vector::empty(),
             total_volume_traded: 0,
             total_fees_earned: 0,
         };
-        
+
         let profile_id = object::uid_to_address(&profile.id);
         table::add(&mut registry.profiles, sender, profile_id);
         registry.total_profiles = registry.total_profiles + 1;
-        
+
         transfer::transfer(profile, sender);
     }
     
@@ -152,6 +155,18 @@ module memeflow::memeflow_social {
     /// =============================
     /// Enhanced Follow Functions
     /// =============================
+
+    /// Emit an on-chain event for a post payload
+    public entry fun emit_post(
+        content: vector<u8>,
+        ctx: &mut TxContext,
+    ) {
+        let sender = tx::sender(ctx);
+        event::emit(PostCreated {
+            author: sender,
+            content,
+        });
+    }
     
     /// Follow a token creator with integrated tracking
     public entry fun follow_token_creator(
@@ -293,19 +308,18 @@ module memeflow::memeflow_social {
     /// =============================
     /// Admin Functions
     /// =============================
-    
-    /// Update profile metadata
+
+    /// Update profile metadata (bio and avatar only)
+    /// Username (token name) cannot be changed
     public entry fun update_profile_metadata(
         profile: &mut MemeFlowProfile,
-        new_username: vector<u8>,
         new_bio: vector<u8>,
         new_avatar_url: vector<u8>,
         ctx: &mut TxContext,
     ) {
         let sender = tx::sender(ctx);
         assert!(sender == profile.owner, 1); // E_NOT_OWNER
-        
-        profile.username = new_username;
+
         profile.bio = new_bio;
         profile.avatar_url = new_avatar_url;
     }

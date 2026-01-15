@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Card } from './ui/card';
-import { Button } from './ui/button';
-import { Avatar } from './ui/avatar';
-import { Textarea } from './ui/textarea';
-import { Alert, AlertDescription } from './ui/alert';
+import { Card } from './ui-simple/Card';
+import { Button } from './ui-simple/Button';
+import { Avatar } from './ui-simple/Avatar';
+import { Textarea } from './ui-simple/Textarea';
+import { Alert, AlertDescription } from './ui-simple/Alert';
 import { Heart, MessageCircle, Repeat2, Share, TrendingUp, Send, AlertCircle, Sparkles, UserPlus } from 'lucide-react';
 import { apiService, type PostWithAuthor, type FollowStatusResponse } from '../lib/api';
+import { MediaGallery } from './MediaGallery';
+import { PostComposer } from './PostComposer';
 
 interface SocialFeedProps {
   user: any;
@@ -66,21 +68,23 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
     }
   };
 
-  const handleCreatePost = async () => {
-    if (!newPost.trim() || !user?.id) return;
-    
+  const handleCreatePost = async (content: string, attachment?: { type: 'image' | 'video'; url: string; blobId?: string }) => {
+    if (!user?.id) return;
+
     setLoading(true);
     try {
+      // Store the Walrus aggregator URL in media_urls
+      const media_urls = attachment ? [attachment.url] : [];
+
       const response = await apiService.createPost({
         author_id: user.id,
-        content: newPost,
-        media_urls: []
+        content,
+        media_urls,
       });
-      
+
       if (response.success && response.data) {
         // Refresh posts to get the updated feed
         await fetchPosts();
-        setNewPost('');
       } else {
         setError(response.error || 'Failed to create post');
       }
@@ -185,38 +189,8 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
         </Alert>
       )}
 
-      {/* Create Post */}
-      <Card className="glass border border-white/10 p-6">
-        <div className="flex space-x-4">
-          <Avatar className="w-12 h-12 bg-gradient-to-r from-cyan-400 to-purple-400 flex items-center justify-center">
-            <span className="text-white font-bold">
-              {user.username ? user.username[0].toUpperCase() : 'U'}
-            </span>
-          </Avatar>
-          <div className="flex-1">
-            <Textarea
-              placeholder="What's happening in the meme verse?"
-              value={newPost}
-              onChange={(e) => setNewPost(e.target.value)}
-              className="bg-white/5 border-white/20 text-white placeholder-white/50 min-h-[100px] resize-none"
-              maxLength={280}
-            />
-            <div className="flex items-center justify-between mt-4">
-              <span className="text-sm text-white/60">
-                {280 - newPost.length} characters remaining
-              </span>
-              <Button
-                onClick={handleCreatePost}
-                disabled={!newPost.trim() || loading}
-                className="bg-gradient-to-r from-cyan-500 to-pink-500 hover:from-cyan-600 hover:to-pink-600"
-              >
-                <Send className="w-4 h-4 mr-2" />
-                {loading ? 'Posting...' : 'Post'}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </Card>
+      {/* Create Post - Walrus-enabled */}
+      <PostComposer onPost={handleCreatePost} />
 
       {/* Posts */}
       <div className="space-y-4">
@@ -262,8 +236,31 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
                     )}
                   </div>
                   
-                  <p className="text-white/90 mb-4 leading-relaxed">{post.content}</p>
-                  
+                  <p className="text-white/90 mb-4 leading-relaxed whitespace-pre-wrap">{post.content}</p>
+
+                  {/* Media Attachment */}
+                  {post.media_urls && post.media_urls.length > 0 && (
+                    <div className="mb-3">
+                      <img
+                        src={post.media_urls[0]}
+                        alt="Post attachment"
+                        className="w-full rounded border border-white/10 max-h-96 object-cover"
+                        onError={(e) => {
+                          // If image fails to load, try as video
+                          const target = e.target as HTMLImageElement;
+                          const parent = target.parentElement;
+                          if (parent) {
+                            const video = document.createElement('video');
+                            video.src = post.media_urls[0];
+                            video.controls = true;
+                            video.className = 'w-full rounded border border-white/10 max-h-96';
+                            parent.replaceChild(video, target);
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+
                   {/* Token mention detection - simple regex */}
                   {(() => {
                     const tokenMention = post.content.match(/\$([A-Z]+)/);

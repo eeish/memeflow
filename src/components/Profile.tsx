@@ -1,10 +1,9 @@
 import React, { useMemo } from 'react';
-import { Button } from './ui/button';
+import { Button } from './ui-simple/Button';
 import { TrendingUp, Users, User, ArrowLeft } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { useSocialFollow, calculatePriceMist } from '../hooks/useSocialFollow';
 import { SimpleChart } from './SimpleChart';
-import { FaucetButton } from './FaucetButton';
 import { useNetwork } from '../contexts/NetworkContext';
 
 const MIST_PER_SUI = 1_000_000_000;
@@ -40,7 +39,7 @@ const generateChartData = (basePrice: number, followerCount: number) => {
 
 export function Profile({ user, onClose }: ProfileProps) {
   const { signOut } = useAuth();
-  const { userProfile, createProfile, error: socialError, followingList } = useSocialFollow();
+  const { userProfile, followingList } = useSocialFollow();
   const { currentNetwork } = useNetwork();
 
   const sharePriceSui = useMemo(() => {
@@ -80,32 +79,6 @@ export function Profile({ user, onClose }: ProfileProps) {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-6">
-        {/* Create Profile CTA */}
-        {!userProfile && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6 mb-4">
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Create Your Social Profile</h3>
-            <p className="text-gray-600 text-sm mb-4">
-              Set up your profile to follow others and participate in the bonding curve economy.
-            </p>
-            {socialError && (
-              <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-700">{socialError}</p>
-                {socialError?.includes('No valid gas coins') && (
-                  <div className="mt-2">
-                    <FaucetButton />
-                  </div>
-                )}
-              </div>
-            )}
-            <Button
-              onClick={() => createProfile(user.username, 'Social DApp user', user.avatar_url || '')}
-              className="w-full bg-gray-900 hover:bg-gray-800 text-white font-medium"
-            >
-              Create Profile
-            </Button>
-          </div>
-        )}
-
         {/* Profile Info */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6 mb-4">
           <div className="flex items-center gap-4 mb-6">

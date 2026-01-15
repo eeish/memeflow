@@ -1,5 +1,6 @@
-// Auto-generated deployment configuration
-// This file is updated automatically by the deployment script
+// Network configuration - Package IDs are loaded from deployment JSON files
+// DO NOT hardcode package IDs here - they are automatically updated by deploy.sh in public/deployment-{network}.json
+// This ensures the frontend always uses the latest deployed contracts
 
 export const DEPLOYMENT_CONFIG = {
   local: {
@@ -9,22 +10,22 @@ export const DEPLOYMENT_CONFIG = {
     packageId: '0x0000000000000000000000000000000000000000000000000000000000000000',
     factoryId: '0x0000000000000000000000000000000000000000000000000000000000000000',
     poolCreationCapId: '',
-    deploymentTx: 'placeholder-transaction-hash',
+    deploymentTx: '',
     initTx: '',
     deployer: '0x0000000000000000000000000000000000000000000000000000000000000000',
-    timestamp: '2025-08-10T00:00:00.000Z'
+    timestamp: ''
   },
   devnet: {
     network: 'devnet',
     rpcUrl: 'https://fullnode.devnet.sui.io:443',
     explorerUrl: 'https://suiscan.xyz/devnet',
-    packageId: '0x5e60863e57204f2a2635fe799ab4e5b792ba6d487d1eaf723abecfa7ee49a19f',
-    factoryId: '0x415f3576fdb53312e721ab4f520fd74767470431db3b8d369b195edb817d28d4',
+    packageId: '0x0000000000000000000000000000000000000000000000000000000000000000',
+    factoryId: '0x0000000000000000000000000000000000000000000000000000000000000000',
     poolCreationCapId: '',
-    deploymentTx: 'DvHB28nK5KwoUADcf7dVfGPFhAVhKXY2VWx3t5rJoPVY',
+    deploymentTx: '',
     initTx: '',
-    deployer: '0xace72a80e389bea3668bbe54bd4677bdef5c4b88d34eb553b7331643ceada5c5',
-    timestamp: '2025-08-10T21:37:00.000Z'
+    deployer: '0x0000000000000000000000000000000000000000000000000000000000000000',
+    timestamp: ''
   },
   testnet: {
     network: 'testnet',
@@ -33,10 +34,10 @@ export const DEPLOYMENT_CONFIG = {
     packageId: '0x0000000000000000000000000000000000000000000000000000000000000000',
     factoryId: '0x0000000000000000000000000000000000000000000000000000000000000000',
     poolCreationCapId: '',
-    deploymentTx: 'placeholder-transaction-hash',
+    deploymentTx: '',
     initTx: '',
     deployer: '0x0000000000000000000000000000000000000000000000000000000000000000',
-    timestamp: '2025-08-10T00:00:00.000Z'
+    timestamp: ''
   },
   mainnet: {
     network: 'mainnet',
@@ -45,10 +46,10 @@ export const DEPLOYMENT_CONFIG = {
     packageId: '0x0000000000000000000000000000000000000000000000000000000000000000',
     factoryId: '0x0000000000000000000000000000000000000000000000000000000000000000',
     poolCreationCapId: '',
-    deploymentTx: 'placeholder-transaction-hash',
+    deploymentTx: '',
     initTx: '',
     deployer: '0x0000000000000000000000000000000000000000000000000000000000000000',
-    timestamp: '2025-08-10T00:00:00.000Z'
+    timestamp: ''
   }
 } as const;
 

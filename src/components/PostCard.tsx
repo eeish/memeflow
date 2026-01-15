@@ -8,6 +8,10 @@ export interface Post {
   timestamp: string;
   likes: number;
   comments: number;
+  attachment?: {
+    type: 'image' | 'video';
+    url: string;
+  };
 }
 
 interface PostCardProps {
@@ -39,6 +43,26 @@ export function PostCard({ post }: PostCardProps) {
 
       {/* Content */}
       <p className="text-gray-800 mb-3 whitespace-pre-wrap">{post.content}</p>
+
+      {/* Attachment */}
+      {post.attachment && (
+        <div className="mb-3">
+          {post.attachment.type === 'image' && (
+            <img
+              src={post.attachment.url}
+              alt="Post attachment"
+              className="w-full rounded border border-gray-200 max-h-96 object-cover"
+            />
+          )}
+          {post.attachment.type === 'video' && (
+            <video
+              src={post.attachment.url}
+              controls
+              className="w-full rounded border border-gray-200 max-h-96"
+            />
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex items-center gap-6 text-gray-500">

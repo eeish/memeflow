@@ -6,12 +6,12 @@ import {
   useWallets,
   useSignPersonalMessage
 } from '@mysten/dapp-kit';
-import { Button } from './ui/button';
-import { Card } from './ui/card';
-import { Alert, AlertDescription } from './ui/alert';
+import { Button } from './ui-simple/Button';
+import { Card } from './ui-simple/Card';
+import { Alert, AlertDescription } from './ui-simple/Alert';
+import { WalletPickerModal } from './ui-simple/WalletPickerModal';
 import { Check, Wallet, Sparkles, Zap } from 'lucide-react';
-import { MemeLaunchPage } from './MemeLaunchPage';
-// Token creation hook removed - focusing on social features only
+import { ProfileSetupFlow } from './ProfileSetupFlow';
 import { useNetwork } from '../contexts/NetworkContext';
 
 const AuthContext = createContext<any>(null);
@@ -37,9 +37,11 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     return localStorage.getItem('authenticated_wallet') || '';
   });
   const [authChallenge, setAuthChallenge] = useState<string | null>(null);
+  const [showWalletPicker, setShowWalletPicker] = useState(false);
+  const [userInitiatedConnection, setUserInitiatedConnection] = useState(false);
 
   // Wallet hooks
-  const { currentWallet } = useCurrentWallet();
+  const { currentWallet, connectionStatus, isConnecting } = useCurrentWallet();
   const { mutate: connect } = useConnectWallet();
   const { mutate: disconnect } = useDisconnectWallet();
   const { mutate: signPersonalMessage } = useSignPersonalMessage();
@@ -69,7 +71,13 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     if (user?.authMethod === 'wallet') {
       interval = setInterval(() => {
         const currentWalletAddress = currentWallet?.accounts?.[0]?.address;
-        
+
+        // Skip verification if wallet is reconnecting (prevents false positives)
+        if (connectionStatus === 'connecting') {
+          console.log('⏸️ [PERIODIC_VERIFY] Wallet reconnecting - skipping verification');
+          return;
+        }
+
         // Critical security check: verify wallet is still connected and matches user
         if (!currentWalletAddress) {
           console.log('🚨 [PERIODIC_VERIFY] Wallet disconnected during session - forcing logout');
@@ -88,27 +96,93 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         clearInterval(interval);
       }
     };
-  }, [user, currentWallet]);
+  }, [user, currentWallet, connectionStatus]);
 
   // Contract error handling removed - no longer using token contracts
+
+  // Wallet authentication function - accessible from anywhere in component
+  const startWalletAuthentication = async (walletAddress: string) => {
+    // Check if we already authenticated this wallet (persisted across refreshes)
+    const storedAuthWallet = localStorage.getItem('authenticated_wallet');
+    const existingUsername = localStorage.getItem('username');
+
+    if ((authenticatedWallet === walletAddress || storedAuthWallet === walletAddress) && existingUsername) {
+      console.log('🔐 [WALLET_AUTH] Wallet already authenticated with existing user, attempting restore');
+      // Try to restore user data without requiring new signature
+      const restored = await authenticateExistingUser(walletAddress);
+      if (restored) {
+        return;
+      }
+      // If restore failed, clear auth state and continue with new authentication
+      console.log('⚠️ [WALLET_AUTH] User restore failed, proceeding with new authentication');
+      localStorage.removeItem('authenticated_wallet');
+      localStorage.removeItem('username');
+      localStorage.removeItem('wallet_address');
+      setAuthenticatedWallet('');
+    }
+
+    // Prevent infinite loop - check if we're already processing this wallet
+    const isProcessing = localStorage.getItem('wallet_processing');
+    if (isProcessing === walletAddress) {
+      console.log('⏳ [WALLET_AUTH] Already processing wallet:', walletAddress);
+      return;
+    }
+
+    try {
+      console.log('🔄 [WALLET_AUTH] Starting Sui wallet authentication for:', walletAddress);
+      localStorage.setItem('wallet_processing', walletAddress);
+      setAuthenticating(true);
+      setError('');
+
+      // Generate authentication challenge
+      const challenge = await generateAuthChallenge(walletAddress);
+      console.log('🔐 [WALLET_AUTH] Generated authentication challenge');
+
+      // Request user to sign the challenge
+      await authenticateWithSignature(walletAddress, challenge);
+    } catch (error: any) {
+      console.error('❌ [WALLET_AUTH] Error during wallet authentication:', error);
+      const errorMsg = error?.message || '';
+      if (errorMsg.includes('rejected') || errorMsg.includes('declined')) {
+        setError('Signature declined. Try again.');
+      } else if (errorMsg.includes('timeout')) {
+        setError('Connection failed. Please retry.');
+      } else {
+        setError('Connection failed. Please retry.');
+      }
+    } finally {
+      console.log('🧹 [WALLET_AUTH] Cleaning up wallet processing for:', walletAddress);
+      localStorage.removeItem('wallet_processing');
+      setAuthenticating(false);
+    }
+  };
 
   // Handle wallet connection and authentication with strict enforcement
   useEffect(() => {
     console.log('🔄 [WALLET_EFFECT] Effect triggered - currentWallet:', !!currentWallet, 'loading:', loading, 'user:', !!user);
-    
+
     const enforceStrictAuthentication = async () => {
       const currentWalletAddress = currentWallet?.accounts?.[0]?.address;
       console.log('🔐 [STRICT_AUTH] Current wallet address:', currentWalletAddress);
       console.log('🔐 [STRICT_AUTH] Authenticated user wallet:', user?.wallet_address);
-      
+      console.log('🔐 [STRICT_AUTH] Connection status:', connectionStatus);
+
+      // CRITICAL: Wait for wallet to finish reconnecting before enforcing security checks
+      // This prevents false logouts on page refresh when wallet is still connecting
+      if (connectionStatus === 'connecting') {
+        console.log('⏸️ [STRICT_AUTH] Wallet is reconnecting - skipping security checks');
+        return;
+      }
+
       // STRICT RULE 1: If user is logged in but wallet is disconnected, force logout
+      // Only enforce this AFTER wallet has finished connection attempt
       if (user?.authMethod === 'wallet' && !currentWalletAddress) {
         console.log('🚨 [STRICT_AUTH] SECURITY VIOLATION: User authenticated but no wallet connected - FORCING LOGOUT');
         await forceLogout('Wallet disconnected');
         return;
       }
-      
-      // STRICT RULE 2: If user is logged in but wallet address doesn't match, force logout  
+
+      // STRICT RULE 2: If user is logged in but wallet address doesn't match, force logout
       if (user?.authMethod === 'wallet' && currentWalletAddress && user.wallet_address !== currentWalletAddress) {
         console.log('🚨 [STRICT_AUTH] SECURITY VIOLATION: Wallet address mismatch - FORCING LOGOUT');
         console.log('🚨 [STRICT_AUTH] Expected:', user.wallet_address);
@@ -116,67 +190,24 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         await forceLogout('Wallet address mismatch - please reconnect your wallet');
         return;
       }
-      
-      // STRICT RULE 3: If wallet is connected but no user, start authentication
-      if (currentWalletAddress && !user) {
-        console.log('🔐 [STRICT_AUTH] Wallet connected but no user - starting authentication');
-        await startWalletAuthentication(currentWalletAddress);
+
+      // RULE 3: Trigger authentication if user initiated connection and wallet is now connected
+      if (userInitiatedConnection && currentWalletAddress && !user && !authenticating) {
+        console.log('🚀 [STRICT_AUTH] User-initiated connection detected, starting authentication');
+        setUserInitiatedConnection(false); // Reset flag to prevent re-triggering
+        startWalletAuthentication(currentWalletAddress);
         return;
       }
-      
+
       // STRICT RULE 4: Validate authentication is still valid
       if (user?.authMethod === 'wallet' && currentWalletAddress === user.wallet_address) {
         console.log('✅ [STRICT_AUTH] Authentication validated - wallet and user match');
         return;
       }
-    };
 
-    const startWalletAuthentication = async (walletAddress: string) => {
-      // Check if we already authenticated this wallet (persisted across refreshes)
-      const storedAuthWallet = localStorage.getItem('authenticated_wallet');
-      const existingUsername = localStorage.getItem('username');
-      
-      if ((authenticatedWallet === walletAddress || storedAuthWallet === walletAddress) && existingUsername) {
-        console.log('🔐 [WALLET_AUTH] Wallet already authenticated with existing user, attempting restore');
-        // Try to restore user data without requiring new signature
-        const restored = await authenticateExistingUser(walletAddress);
-        if (restored) {
-          return;
-        }
-        // If restore failed, clear auth state and continue with new authentication
-        console.log('⚠️ [WALLET_AUTH] User restore failed, proceeding with new authentication');
-        localStorage.removeItem('authenticated_wallet');
-        localStorage.removeItem('username');
-        localStorage.removeItem('wallet_address');
-        setAuthenticatedWallet('');
-      }
-      
-      // Prevent infinite loop - check if we're already processing this wallet
-      const isProcessing = localStorage.getItem('wallet_processing');
-      if (isProcessing === walletAddress) {
-        console.log('⏳ [WALLET_AUTH] Already processing wallet:', walletAddress);
-        return;
-      }
-      
-      try {
-        console.log('🔄 [WALLET_AUTH] Starting Sui wallet authentication for:', walletAddress);
-        localStorage.setItem('wallet_processing', walletAddress);
-        setAuthenticating(true);
-        setError('');
-        
-        // Generate authentication challenge
-        const challenge = await generateAuthChallenge(walletAddress);
-        console.log('🔐 [WALLET_AUTH] Generated authentication challenge');
-        
-        // Request user to sign the challenge
-        await authenticateWithSignature(walletAddress, challenge);
-      } catch (error) {
-        console.error('❌ [WALLET_AUTH] Error during wallet authentication:', error);
-        setError('Wallet authentication failed. Please try again.');
-      } finally {
-        console.log('🧹 [WALLET_AUTH] Cleaning up wallet processing for:', walletAddress);
-        localStorage.removeItem('wallet_processing');
-        setAuthenticating(false);
+      // Log if wallet is connected but not authenticated (but don't take action on page load)
+      if (currentWalletAddress && !user && !userInitiatedConnection) {
+        console.log('ℹ️ [STRICT_AUTH] Wallet connected but user not authenticated - waiting for user action');
       }
     };
 
@@ -187,7 +218,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     } else {
       console.log('⏸️ [STRICT_AUTH] Skipping - loading:', loading);
     }
-  }, [currentWallet, user, loading]);
+  }, [currentWallet, user, loading, userInitiatedConnection, authenticating, connectionStatus]);
 
   const generateUsernameFromAddress = (address: string): string => {
     // Generate a readable username from wallet address
@@ -199,13 +230,14 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
   const forceLogout = async (reason: string) => {
     console.log('🚨 [FORCE_LOGOUT] Forcing logout due to:', reason);
-    
+
     // Clear all authentication state
     setUser(null);
     setAuthenticatedWallet('');
     setShowMemeLaunch(false);
     setPendingWalletAddress('');
-    setError(reason);
+    // Don't set error on logout - user will see clean login screen
+    setError('');
     setSuccess('');
     setLoading(false);
     
@@ -235,7 +267,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       // Create a secure authentication challenge message
       const timestamp = Date.now();
       const nonce = Math.random().toString(36).substring(2, 15);
-      const message = `MemeFlow Authentication\n\nWallet: ${walletAddress}\nTimestamp: ${timestamp}\nNonce: ${nonce}\n\nSign this message to authenticate with MemeFlow.`;
+      const message = `Cord Authentication\n\nWallet: ${walletAddress}\nTimestamp: ${timestamp}\nNonce: ${nonce}\n\nSign this message to authenticate with Cord.`;
       
       setAuthChallenge(message);
       return message;
@@ -503,102 +535,112 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
 
   const handleWalletConnect = async () => {
+    setError('');
+
+    // Check if any wallets are available
+    if (wallets.length === 0) {
+      setShowWalletPicker(true);
+      return;
+    }
+
+    // Show wallet picker modal
+    setShowWalletPicker(true);
+  };
+
+  const connectToWallet = async (walletToConnect: any) => {
     try {
       setLoading(true);
       setError('');
-      
+      setShowWalletPicker(false);
+
       // Clear any stale authentication state before connecting
       console.log('🔄 [WALLET_CONNECT] Starting fresh wallet connection');
       localStorage.removeItem('authenticated_wallet');
       localStorage.removeItem('wallet_processing');
       setAuthenticatedWallet('');
-      
-      // Check if any wallets are available
-      if (wallets.length === 0) {
-        setError('No Sui wallets detected. Please install Suiet, Sui Wallet, or another compatible wallet.');
-        setLoading(false);
-        return;
-      }
 
-      // Try to connect with the first available wallet, or let user choose
-      const firstWallet = wallets[0];
-      
+      // Mark that user initiated this connection
+      setUserInitiatedConnection(true);
+
       connect(
-        { wallet: firstWallet },
+        { wallet: walletToConnect },
         {
           onSuccess: () => {
+            console.log('✅ [WALLET_CONNECT] Wallet connected successfully, authentication will start automatically');
             setSuccess('Wallet connected successfully!');
             setLoading(false);
           },
           onError: (error: any) => {
             console.error('Wallet connection error:', error);
-            setError(error?.message || 'Failed to connect wallet. Please try again or check your wallet.');
+            // Parse error for specific messages
+            const errorMsg = error?.message || '';
+            if (errorMsg.includes('rejected') || errorMsg.includes('denied')) {
+              setError('Signature declined. Try again.');
+            } else if (errorMsg.includes('timeout')) {
+              setError('Connection failed. Please retry.');
+            } else {
+              setError('Connection failed. Please retry.');
+            }
             setLoading(false);
+            setUserInitiatedConnection(false); // Reset flag on error
           }
         }
       );
     } catch (error: any) {
       console.error('Wallet connection error:', error);
-      setError(error?.message || 'Failed to connect wallet. Please make sure you have a Sui wallet installed.');
+      setError('Connection failed. Please retry.');
       setLoading(false);
+      setUserInitiatedConnection(false); // Reset flag on error
     }
   };
 
-  // Handle meme launch completion
+  // Handle profile setup completion - on-chain profile is already created
   const handleMemeLaunchComplete = async (userData: {
     username: string;
-    displayName?: string;
-    bio?: string;
-    avatarUrl?: string;
   }) => {
     try {
       setLoading(true);
       setError('');
-      
-      console.log('🚀 Creating user with meme launch data:', userData);
+
+      console.log('🚀 Creating backend user (on-chain profile already created)');
       console.log('🔑 Pending wallet address:', pendingWalletAddress);
-      
-      // Step 1: Create user in backend database
+
+      // Create user in backend database (on-chain profile was created in ProfileSetupFlow)
       const newUser = await createUserWithWallet({
         walletAddress: pendingWalletAddress,
         username: userData.username,
-        displayName: userData.displayName || userData.username, // Use username as fallback
-        bio: userData.bio,
-        avatarUrl: userData.avatarUrl,
+        displayName: userData.username,
+        bio: undefined,
+        avatarUrl: undefined,
       });
-      
-      // Step 2: Token creation removed - focusing on social features only
-      console.log('Token creation on blockchain has been disabled - focusing on social features');
-      let blockchainTx = null;
-      
-      // Create user object for local state (blockchain token is optional)
+
+      console.log('✅ Backend user created successfully');
+
+      // Create user object for local state
       const userState = {
         ...newUser,
-        wallet_address: pendingWalletAddress, // Use consistent wallet_address field
+        wallet_address: pendingWalletAddress,
         authMethod: 'wallet' as const,
         tokenSymbol: userData.username.toUpperCase(),
-        blockchainTx, // Will be null if creation failed
-        hasBlockchainToken: !!blockchainTx
+        hasOnChainProfile: true
       };
-      
+
       setUser(userState);
       setShowMemeLaunch(false);
       setPendingWalletAddress('');
-      setSuccess(`🚀 Welcome to MemeFlow, @${userData.username}! Your token $${userData.username.toUpperCase()} is now live on blockchain!`);
-      
+
       // Store auth info persistently
       localStorage.setItem('wallet_address', pendingWalletAddress);
       localStorage.setItem('username', userData.username);
       localStorage.setItem('token_symbol', userData.username.toUpperCase());
       localStorage.setItem('wallet_auth_completed', Date.now().toString());
       localStorage.setItem('authenticated_wallet', pendingWalletAddress);
-      if (blockchainTx) {
-        localStorage.setItem('blockchain_tx', blockchainTx);
-      }
-      
+
+      setSuccess(`Welcome to Cord, @${userData.username}!`);
+
     } catch (error: any) {
-      console.error('Error creating user and token:', error);
-      setError(error.message || 'Failed to create your profile and token. Please try again.');
+      console.error('Error creating backend user:', error);
+      setError(error.message || 'Failed to complete profile setup. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -657,146 +699,116 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-900 via-pink-900 to-cyan-900">
-        <div className="text-white text-xl">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-gray-900 text-lg">Loading...</div>
       </div>
     );
   }
 
-  // Show meme launch page for new users
+  // Show profile setup flow for new users
   if (showMemeLaunch && pendingWalletAddress) {
-    console.log('🚀 [AUTH_PROVIDER] Rendering MemeLaunchPage for:', pendingWalletAddress, 'loading:', loading);
+    console.log('🚀 [AUTH_PROVIDER] Rendering ProfileSetupFlow for:', pendingWalletAddress);
     return (
-      <MemeLaunchPage
+      <ProfileSetupFlow
         walletAddress={pendingWalletAddress}
         onComplete={handleMemeLaunchComplete}
         onCancel={handleMemeLaunchCancel}
-        loading={loading}
       />
     );
   }
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-900 via-pink-900 to-cyan-900 p-4">
-        <Card className="w-full max-w-md p-8 glass-strong border-2 border-white/20 rounded-2xl">
-          <div className="text-center mb-8">
-            <div className="w-16 h-16 bg-gradient-to-r from-cyan-400 via-pink-400 to-purple-400 rounded-full mx-auto mb-6 flex items-center justify-center shadow-lg">
-              <span className="text-white font-bold text-2xl">M</span>
+      <>
+        {/* Wallet Picker Modal */}
+        <WalletPickerModal
+          open={showWalletPicker}
+          onClose={() => setShowWalletPicker(false)}
+          wallets={wallets}
+          onSelectWallet={connectToWallet}
+          network="Sui"
+        />
+
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+          <div className="w-full max-w-md">
+            {/* Logo/Brand */}
+            <div className="text-center mb-12">
+              <h1 className="text-4xl tracking-tight text-gray-900 mb-2">Cord</h1>
+              <p className="text-sm text-gray-600">Connect your wallet to continue</p>
             </div>
-            <h2 className="text-3xl font-bold text-transparent bg-gradient-to-r from-cyan-400 via-pink-400 to-purple-400 bg-clip-text mb-2">
-              Join MemeFlow
-            </h2>
-            <p className="text-white/80 text-base leading-relaxed">
-              Connect your wallet to start trading
-            </p>
-          </div>
 
-          {error && (
-            <Alert className="mb-4 border-red-500 bg-red-500/10">
-              <AlertDescription className="text-red-400">{error}</AlertDescription>
-            </Alert>
-          )}
+            {/* Error state */}
+            {error && (
+              <Alert variant="error" className="mb-6">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
-          {success && (
-            <Alert className="mb-4 border-green-500 bg-green-500/10">
-              <Check className="w-4 h-4" />
-              <AlertDescription className="text-green-400">{success}</AlertDescription>
-            </Alert>
-          )}
+            {/* Waiting state */}
+            {authenticating && (
+              <Alert className="mb-6">
+                <AlertDescription>
+                  <span className="font-medium">Waiting for signature…</span>
+                  <br />
+                  <span className="text-xs text-gray-600">Check your wallet and approve the request.</span>
+                </AlertDescription>
+              </Alert>
+            )}
 
-          {/* Wallet Connect Section */}
-          <div className="mb-8">
-            <div className="text-center mb-6">
-              <h3 className="text-xl font-semibold text-white mb-3">Connect Wallet</h3>
-              <p className="text-sm text-white/70 leading-relaxed">Your username becomes your token automatically!</p>
+            {/* Wallet Options */}
+            <div className="space-y-3">
+              <button
+                onClick={handleWalletConnect}
+                disabled={loading || authenticating}
+                className={`w-full bg-white border border-gray-200 p-4 hover:border-gray-300 transition-colors text-left ${
+                  loading || authenticating ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-base text-gray-900 mb-1">Sui</div>
+                    <div className="text-xs text-gray-500">Sui Wallet, Suiet, Ethos</div>
+                  </div>
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 flex-shrink-0" />
+                </div>
+                {(loading || authenticating) && (
+                  <div className="mt-3 text-xs text-gray-600">
+                    {loading ? 'Connecting...' : 'Waiting for signature...'}
+                  </div>
+                )}
+              </button>
+
+              <button
+                disabled
+                className="w-full bg-white border border-gray-200 p-4 opacity-50 cursor-not-allowed text-left"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-base text-gray-900 mb-1">Ethereum</div>
+                    <div className="text-xs text-gray-500">MetaMask, WalletConnect, Coinbase</div>
+                  </div>
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex-shrink-0" />
+                </div>
+              </button>
             </div>
-            
-            <Button
-              onClick={handleWalletConnect}
-              disabled={loading || wallets.length === 0}
-              className={`w-full h-16 text-lg font-bold tracking-wide transition-all duration-300 rounded-xl ${
-                wallets.length === 0 
-                  ? 'bg-gray-600 cursor-not-allowed opacity-50' 
-                  : 'bg-gradient-to-r from-purple-500 via-pink-500 to-cyan-500 hover:from-purple-600 hover:via-pink-600 hover:to-cyan-600 hover:shadow-2xl hover:scale-[1.02] active:scale-[0.98]'
-              } text-white shadow-xl border border-white/10`}
-            >
-              <div className="flex items-center justify-center space-x-3">
-                <Wallet className="w-6 h-6" />
-                <span>{loading ? 'Connecting...' : wallets.length === 0 ? 'No Wallet Detected' : 'Connect Sui Wallet'}</span>
-                <Sparkles className="w-5 h-5" />
-              </div>
-            </Button>
-            
-            <div className="flex items-center justify-center space-x-2 mt-4 px-4 py-2 bg-white/5 rounded-lg border border-white/10">
-              <Zap className="w-4 h-4 text-cyan-400" />
-              <span className="text-sm text-white/70 font-medium">
-                {wallets.length > 0 
-                  ? `${wallets.length} wallet${wallets.length > 1 ? 's' : ''} detected` 
-                  : 'Install a Sui-compatible wallet'}
-              </span>
-            </div>
-          </div>
 
-          {/* Wallet instructions */}
-          <div className="text-center">
-            {wallets.length > 0 ? (
-              <div className="bg-gradient-to-r from-cyan-500/15 to-purple-500/15 rounded-xl p-6 border border-cyan-500/30 backdrop-blur-sm">
-                <Sparkles className="w-10 h-10 text-cyan-400 mx-auto mb-3" />
-                <p className="text-white/90 text-base leading-relaxed mb-2">
-                  Click "Connect Sui Wallet" to instantly create your personalized token!
-                </p>
-                <div className="flex items-center justify-center space-x-4 text-sm text-white/60 mt-3">
-                  <span className="flex items-center space-x-1">
-                    <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                    <span>No signup required</span>
-                  </span>
-                  <span className="flex items-center space-x-1">
-                    <div className="w-2 h-2 bg-cyan-400 rounded-full"></div>
-                    <span>Instant token generation</span>
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="bg-gradient-to-r from-orange-500/15 to-red-500/15 rounded-xl p-6 border border-orange-500/30 backdrop-blur-sm">
-                <div className="text-3xl mb-3">⚠️</div>
-                <p className="text-white/90 text-base leading-relaxed mb-4">
-                  No Sui wallet detected. Install one to get started:
-                </p>
-                <div className="grid grid-cols-1 gap-3 text-sm">
-                  <a href="https://suiet.app/" target="_blank" rel="noopener noreferrer" 
-                     className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10 hover:border-cyan-400/50 transition-colors">
-                    <div className="flex items-center space-x-3">
-                      <Wallet className="w-4 h-4 text-cyan-400" />
-                      <span className="text-white/80">Suiet Wallet</span>
-                    </div>
-                    <span className="text-cyan-400 text-xs">Recommended</span>
-                  </a>
-                  <a href="https://chrome.google.com/webstore/detail/sui-wallet/opcgpfmipidbgpenhmajoajpbobppdil" target="_blank" rel="noopener noreferrer"
-                     className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10 hover:border-cyan-400/50 transition-colors">
-                    <div className="flex items-center space-x-3">
-                      <Wallet className="w-4 h-4 text-blue-400" />
-                      <span className="text-white/80">Sui Wallet</span>
-                    </div>
-                    <span className="text-cyan-400 text-xs">Official</span>
-                  </a>
-                  <a href="https://ethoswallet.xyz/" target="_blank" rel="noopener noreferrer"
-                     className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10 hover:border-cyan-400/50 transition-colors">
-                    <div className="flex items-center space-x-3">
-                      <Wallet className="w-4 h-4 text-purple-400" />
-                      <span className="text-white/80">Ethos Wallet</span>
-                    </div>
-                    <span className="text-cyan-400 text-xs">Popular</span>
-                  </a>
-                </div>
-                <div className="text-sm text-white/60 mt-4 p-2 bg-white/5 rounded-lg">
-                  💡 Refresh this page after installing a wallet
-                </div>
-              </div>
+            {/* Cancel button when authenticating */}
+            {authenticating && (
+              <Button
+                onClick={() => {
+                  setAuthenticating(false);
+                  setError('');
+                  localStorage.removeItem('wallet_processing');
+                }}
+                variant="outline"
+                className="w-full h-10 text-sm mt-4"
+              >
+                Cancel
+              </Button>
             )}
           </div>
-        </Card>
-      </div>
+        </div>
+      </>
     );
   }
 

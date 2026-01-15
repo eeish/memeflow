@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PostComposer } from './PostComposer';
 import { PostCard, type Post } from './PostCard';
 import { FeedTabs } from './FeedTabs';
-import { Alert, AlertDescription } from './ui/alert';
+import { Alert, AlertDescription } from './ui-simple/Alert';
 import { AlertCircle } from 'lucide-react';
 
 interface PlazaProps {
@@ -82,7 +82,7 @@ export const Plaza: React.FC<PlazaProps> = ({ user, onNavigateToProfile }) => {
     return `${Math.floor(seconds / 86400)}d`;
   };
 
-  const handleNewPost = (content: string) => {
+  const handleNewPost = (content: string, attachment?: { type: 'image' | 'video'; url: string; blobId?: string }) => {
     const newPost: Post = {
       id: Date.now().toString(),
       author: `@${user.username}`,
@@ -90,6 +90,7 @@ export const Plaza: React.FC<PlazaProps> = ({ user, onNavigateToProfile }) => {
       timestamp: 'now',
       likes: 0,
       comments: 0,
+      attachment: attachment ? { type: attachment.type, url: attachment.url } : undefined,
     };
     setPosts([newPost, ...posts]);
   };

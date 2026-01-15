@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Button } from './ui/button';
+import { Button } from './ui-simple/Button';
 import { Coins } from 'lucide-react';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { useNotifications } from '../contexts/NotificationContext';

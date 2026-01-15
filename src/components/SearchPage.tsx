@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Card } from './ui/card';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Avatar } from './ui/avatar';
-import { Badge } from './ui/badge';
+import { Card } from './ui-simple/Card';
+import { Button } from './ui-simple/Button';
+import { Input } from './ui-simple/Input';
+import { Avatar } from './ui-simple/Avatar';
+import { Badge } from './ui-simple/Badge';
 import { Search, X, TrendingUp, Users, Hash } from 'lucide-react';
 
 interface SearchPageProps {

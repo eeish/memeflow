@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Button } from './ui/button';
-import { Card } from './ui/card';
+import { Button } from './ui-simple/Button';
+import { Card } from './ui-simple/Card';
 import { 
   DropdownMenu,
   DropdownMenuContent,
@@ -8,8 +8,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from './ui/dropdown-menu';
-import { Badge } from './ui/badge';
+} from './ui-simple/dropdown-menu';
+import { Badge } from './ui-simple/Badge';
 import { 
   ChevronDown, 
   Globe, 

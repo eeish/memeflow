@@ -176,7 +176,58 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
-        
+
+        // Walrus integration: Add new columns to posts table if they don't exist
+        // SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we check first
+        let columns_exist = sqlx::query(
+            "SELECT content_blob_id, content_protocol_version FROM posts LIMIT 0"
+        )
+        .fetch_optional(&self.pool)
+        .await;
+
+        if columns_exist.is_err() {
+            println!("📦 Running Walrus integration migration: adding content_blob_id and content_protocol_version to posts table");
+
+            sqlx::query("ALTER TABLE posts ADD COLUMN content_blob_id TEXT")
+                .execute(&self.pool)
+                .await?;
+
+            sqlx::query("ALTER TABLE posts ADD COLUMN content_protocol_version TEXT DEFAULT '1.0'")
+                .execute(&self.pool)
+                .await?;
+
+            println!("✅ Added Walrus columns to posts table");
+        }
+
+        // Create media_blobs table for tracking individual media items
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS media_blobs (
+                id TEXT PRIMARY KEY,
+                post_id TEXT NOT NULL,
+                blob_id TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                checksum TEXT,
+                metadata TEXT,
+                upload_status TEXT DEFAULT 'uploaded',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
+            );
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create indexes for faster queries
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_media_blobs_post_id ON media_blobs(post_id)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_posts_content_blob_id ON posts(content_blob_id)")
+            .execute(&self.pool)
+            .await?;
+
         println!("✅ Database tables created successfully");
         Ok(())
     }
@@ -272,27 +323,38 @@ impl Database {
         let post_id = Uuid::new_v4();
         let author_id = Uuid::parse_str(&request.author_id)?;
         let now = Utc::now().to_rfc3339();
-        
+
+        // Extract protocol fields if present
+        let (content_blob_id, content_protocol_version) = if request.protocol_content.is_some() {
+            (None, Some("1.0".to_string())) // Will be set by handler after uploading to Walrus
+        } else {
+            (None, None)
+        };
+
         sqlx::query(
             r#"
-            INSERT INTO posts (id, user_id, content, image_url, likes_count, comments_count, retweets_count, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 0, 0, 0, ?, ?)
+            INSERT INTO posts (id, user_id, content, image_url, content_blob_id, content_protocol_version, likes_count, comments_count, retweets_count, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)
             "#,
         )
         .bind(post_id.to_string())
         .bind(request.author_id)
         .bind(&request.content)
         .bind::<Option<String>>(None) // image_url
+        .bind(content_blob_id.as_ref())
+        .bind(content_protocol_version.as_ref())
         .bind(&now)
         .bind(&now)
         .execute(&self.pool)
         .await?;
-        
+
         Ok(Post {
             id: post_id,
             author_id: author_id,
             content: request.content,
             media_urls: request.media_urls.unwrap_or_default(),
+            content_blob_id,
+            content_protocol_version,
             likes_count: 0,
             comments_count: 0,
             reposts_count: 0,
@@ -307,9 +369,10 @@ impl Database {
         
         let rows = sqlx::query(
             r#"
-            SELECT 
-                p.id as post_id, p.user_id, p.content, p.image_url, 
-                p.likes_count, p.comments_count, p.retweets_count, 
+            SELECT
+                p.id as post_id, p.user_id, p.content, p.image_url,
+                p.content_blob_id, p.content_protocol_version,
+                p.likes_count, p.comments_count, p.retweets_count,
                 p.created_at as post_created_at, p.updated_at as post_updated_at,
                 u.username, u.display_name, u.avatar_url, u.bio, u.token_symbol
             FROM posts p
@@ -329,13 +392,15 @@ impl Database {
             let user_id: String = row.get("user_id");
             let created_at: String = row.get("post_created_at");
             let updated_at: String = row.get("post_updated_at");
-            
+
             let post = PostWithAuthor {
                 post: Post {
                     id: Uuid::parse_str(&post_id)?,
                     author_id: Uuid::parse_str(&user_id)?,
                     content: row.get("content"),
                     media_urls: vec![],
+                    content_blob_id: row.get("content_blob_id"),
+                    content_protocol_version: row.get("content_protocol_version"),
                     likes_count: row.get("likes_count"),
                     comments_count: row.get("comments_count"),
                     reposts_count: row.get("retweets_count"),

@@ -2,8 +2,8 @@ import React from 'react';
 import { useSuiClient, useCurrentAccount } from '@mysten/dapp-kit';
 import { useNetwork } from '../contexts/NetworkContext';
 import { useNotifications } from '../contexts/NotificationContext';
-import { Card } from './ui/card';
-import { Button } from './ui/button';
+import { Card } from './ui-simple/Card';
+import { Button } from './ui-simple/Button';
 
 export const DebugNetwork: React.FC = () => {
   const client = useSuiClient();

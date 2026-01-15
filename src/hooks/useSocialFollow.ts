@@ -83,10 +83,9 @@ export function useSocialFollow() {
   const FACTORY_ID = factoryId;
 
   // Create profile (FollowBook + Market)
+  // Only requires username (token name) - cannot be changed later
   const createProfile = useCallback(async (
-    username: string,
-    bio: string,
-    avatarUrl: string
+    username: string
   ) => {
     if (!account) {
       setError('Wallet not connected');
@@ -97,28 +96,20 @@ export function useSocialFollow() {
       setError(`Contracts not deployed. Please ensure contracts are deployed on the network.`);
       return;
     }
-    
-    // Limit the size of string arguments to prevent exceeding Sui's 16KB limit
-    const MAX_STRING_SIZE = 1000; // Conservative limit for each string field
-    
-    // Truncate or replace long strings
-    const safeUsername = username.length > MAX_STRING_SIZE ? username.substring(0, MAX_STRING_SIZE) : username;
-    const safeBio = bio.length > MAX_STRING_SIZE ? bio.substring(0, MAX_STRING_SIZE) : bio;
-    
-    // For avatar URLs, use empty string if too long (common with base64 data URLs)
-    const safeAvatarUrl = avatarUrl.length > MAX_STRING_SIZE ? '' : avatarUrl;
-    
+
+    // Limit username size to prevent exceeding Sui's limits
+    const MAX_USERNAME_SIZE = 100; // Reasonable limit for username
+    const safeUsername = username.length > MAX_USERNAME_SIZE ? username.substring(0, MAX_USERNAME_SIZE) : username;
+
     // Log for debugging
     console.log('Creating profile with:', {
       packageId: PACKAGE_ID,
       profileRegistryId: PROFILE_REGISTRY_ID,
       usernameLength: safeUsername.length,
-      bioLength: safeBio.length,
-      avatarUrlLength: safeAvatarUrl.length,
       walletAddress: account.address,
       rpcUrl: client.url
     });
-    
+
     // Verify the registry object exists before attempting transaction
     try {
       const registryObj = await client.getObject({
@@ -138,19 +129,14 @@ export function useSocialFollow() {
 
     try {
       const tx = new Transaction();
-      
-      // Call create_memeflow_profile
-      // Use bcs to properly encode vector<u8> arguments
+
+      // Call create_memeflow_profile with only username
       const usernameBytes = bcs.vector(bcs.u8()).serialize(Array.from(new TextEncoder().encode(safeUsername)));
-      const bioBytes = bcs.vector(bcs.u8()).serialize(Array.from(new TextEncoder().encode(safeBio)));
-      const avatarBytes = bcs.vector(bcs.u8()).serialize(Array.from(new TextEncoder().encode(safeAvatarUrl)));
-      
+
       tx.moveCall({
         target: `${PACKAGE_ID}::memeflow_social::create_memeflow_profile`,
         arguments: [
           tx.pure(usernameBytes),
-          tx.pure(bioBytes),
-          tx.pure(avatarBytes),
           tx.object(PROFILE_REGISTRY_ID),
         ],
       });
