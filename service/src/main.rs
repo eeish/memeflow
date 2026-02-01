@@ -1,19 +1,23 @@
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post},
     Router,
 };
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use std::sync::Arc;
 
 mod models;
-mod handlers_simple;
-mod database_sqlite;
+mod handlers;
+mod database;
 mod sui_verification;
 mod r2_client;
+pub mod post_hash;
+pub mod username_validation;
+pub mod profile_validation;
 
-use database_sqlite as database;
-use handlers_simple::*;
+use handlers::*;
 
 // Application state
 #[derive(Clone)]
@@ -31,8 +35,21 @@ async fn main() {
         let _ = dotenvy::dotenv();
     }
 
-    // Initialize logger
-    env_logger::init();
+    // Initialize tracing subscriber with env filter
+    // Default to info level, but allow RUST_LOG to override
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,tower_http=debug,cord_service=debug"));
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(true)
+                .with_thread_ids(false)
+                .with_file(true)
+                .with_line_number(true)
+        )
+        .init();
 
     // Initialize database
     let db = Arc::new(database::Database::new().await.expect("Failed to initialize database"));
@@ -41,11 +58,11 @@ async fn main() {
     let network_url = std::env::var("SUI_NETWORK_URL").ok();
     let sui_verification = match sui_verification::SuiVerification::with_client(network_url.as_deref()).await {
         Ok(service) => {
-            log::info!("Sui verification service initialized with blockchain client");
+            tracing::info!("Sui verification service initialized with blockchain client");
             Arc::new(service)
         }
         Err(e) => {
-            log::warn!("Failed to initialize Sui client, using offline mode: {}", e);
+            tracing::warn!("Failed to initialize Sui client, using offline mode: {}", e);
             Arc::new(sui_verification::SuiVerification::new())
         }
     };
@@ -54,23 +71,23 @@ async fn main() {
     let mut r2_error: Option<String> = None;
     let r2_client = match r2_client::R2Client::from_env().await {
         Ok(client) => {
-            log::info!("✅ R2 client initialized successfully");
+            tracing::info!("✅ R2 client initialized successfully");
             match client.health_check().await {
                 Ok(_) => {
-                    log::info!("✅ R2 bucket is accessible");
+                    tracing::info!("✅ R2 bucket is accessible");
                     Some(Arc::new(client))
                 }
                 Err(e) => {
-                    log::warn!("⚠️  R2 health check failed: {}", e);
-                    log::warn!("⚠️  Media uploads will be disabled until R2 is reachable.");
+                    tracing::warn!("⚠️  R2 health check failed: {}", e);
+                    tracing::warn!("⚠️  Media uploads will be disabled until R2 is reachable.");
                     r2_error = Some(format!("R2 health check failed: {}", e));
                     None
                 }
             }
         }
         Err(e) => {
-            log::warn!("⚠️  R2 client not initialized: {}", e);
-            log::warn!("⚠️  Media uploads will be disabled. Set R2 environment variables to enable uploads.");
+            tracing::warn!("⚠️  R2 client not initialized: {}", e);
+            tracing::warn!("⚠️  Media uploads will be disabled. Set R2 environment variables to enable uploads.");
             r2_error = Some(format!("R2 client not initialized: {}", e));
             None
         }
@@ -89,8 +106,6 @@ async fn main() {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let body_limit = RequestBodyLimitLayer::new(1024 * 1024 * 100); // 100 MB
-
     // Build application router - essential routes for Plaza + auth + posts
     let app = Router::new()
         // Health check
@@ -101,27 +116,74 @@ async fn main() {
 
         // User management (for authentication)
         .route("/api/users", post(create_user))
+        .route("/api/users/check-username/:username", get(check_username_available))
         .route("/api/verify/user-exists/:address", get(check_user_exists_by_address))
         .route("/api/users/by-address/:address", get(get_user_by_address))
+        .route("/api/users/:id", get(get_user_by_id))
+        .route("/api/users/:id/profile", post(update_user_profile))
 
         // Posts
         .route("/api/posts", post(create_post))
         .route("/api/posts/:id/like", post(like_post))
+        .route("/api/posts/verify-hash", post(verify_post_hash))
 
         // News feed
         .route("/api/users/:id/feed", get(get_news_feed))
+
+        // User posts
+        .route("/api/users/:id/posts", get(get_user_posts))
+
+        // Follow/Unfollow
+        .route("/api/users/:id/follow", post(follow_user))
+        .route("/api/users/:id/unfollow", post(unfollow_user))
+        .route("/api/users/:id/follow-status", get(get_follow_status))
 
         // Media uploads (R2)
         .route("/api/media/upload", post(upload_media))
         .route("/api/media/batch-upload", post(batch_upload_media))
 
+        // zkLogin proxies (avoid browser CORS)
+        .route("/api/zklogin/salt", post(zklogin_salt_proxy))
+        .route("/api/zklogin/proof", post(zklogin_proof_proxy))
+
         .layer(cors)
-        .layer(body_limit)
+        .layer(DefaultBodyLimit::max(1024 * 1024 * 100)) // 100 MB - compatible with Multipart
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::http::Request<_>| {
+                    tracing::info_span!(
+                        "http_request",
+                        method = %request.method(),
+                        uri = %request.uri(),
+                    )
+                })
+                .on_request(|request: &axum::http::Request<_>, _span: &tracing::Span| {
+                    tracing::info!(
+                        method = %request.method(),
+                        uri = %request.uri(),
+                        "→ request"
+                    );
+                })
+                .on_response(|response: &axum::http::Response<_>, latency: std::time::Duration, _span: &tracing::Span| {
+                    tracing::info!(
+                        status = %response.status(),
+                        latency = ?latency,
+                        "← response"
+                    );
+                })
+                .on_failure(|error: tower_http::classify::ServerErrorsFailureClass, latency: std::time::Duration, _span: &tracing::Span| {
+                    tracing::error!(
+                        error = %error,
+                        latency = ?latency,
+                        "✗ request failed"
+                    );
+                })
+        )
         .with_state(app_state);
 
     // Start the server
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
-    println!("🚀 MemeFlow Service running on http://0.0.0.0:3001");
+    println!("🚀 Cord Service running on http://0.0.0.0:3001");
     
     axum::serve(listener, app).await.unwrap();
 }

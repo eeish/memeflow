@@ -16,7 +16,10 @@ const queryClient = new QueryClient({
       gcTime: 10 * 60 * 1000, // 10 minutes
     },
     mutations: {
-      retry: 1,
+      // IMPORTANT: Do not retry mutations automatically.
+      // User-initiated actions like wallet signing should never auto-retry
+      // as rejection is intentional, not a transient failure.
+      retry: false,
     },
   },
 })

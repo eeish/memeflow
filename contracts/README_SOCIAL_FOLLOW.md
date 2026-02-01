@@ -1,11 +1,11 @@
-# MemeFlow Social Follow Smart Contract Documentation
+# Cord Social Follow Smart Contract Documentation
 
 ## Overview
 
-The MemeFlow Social Follow system implements a decentralized social graph with economic incentives using a quadratic bonding curve pricing model similar to Friend.tech. The system consists of two main modules:
+The Cord Social Follow system implements a decentralized social graph with economic incentives using a quadratic bonding curve pricing model similar to Friend.tech. The system consists of two main modules:
 
 1. **social_follow.move** - Core following mechanics with bonding curve
-2. **memeflow_social.move** - Integration layer for MemeFlow ecosystem
+2. **cord_social.move** - Integration layer for Cord ecosystem
 
 ## Key Features
 
@@ -54,8 +54,8 @@ struct Market {
     treasury: Balance<SUI>,  // Accumulated funds from key sales
 }
 
-// Extended profile for MemeFlow
-struct MemeFlowProfile {
+// Extended profile for Cord
+struct CordProfile {
     id: UID,
     owner: address,
     follow_book_id: address,
@@ -80,8 +80,8 @@ struct MemeFlowProfile {
 // Create both FollowBook and Market
 public entry fun create_profile(ctx: &mut TxContext)
 
-// Create extended MemeFlow profile
-public entry fun create_memeflow_profile(
+// Create extended Cord profile
+public entry fun create_cord_profile(
     username: vector<u8>,
     bio: vector<u8>,
     avatar_url: vector<u8>,

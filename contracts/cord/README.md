@@ -1,4 +1,4 @@
-# MemeFlow Smart Contracts
+# Cord Smart Contracts
 
 ## Contract Structure
 
@@ -11,9 +11,9 @@ These contracts are currently deployed and actively used:
    - Manages FollowBook and Market objects
    - Provides 7 free follows for new users
 
-2. **`memeflow_social.move`** ✅ ACTIVE
-   - Integration layer between MemeFlow and social following
-   - Manages MemeFlowProfile with additional metadata
+2. **`cord_social.move`** ✅ ACTIVE
+   - Integration layer between Cord and social following
+   - Manages CordProfile with additional metadata
    - Handles batch operations and enhanced tracking
 
 ### Token Trading Contracts (Future Implementation)
@@ -65,7 +65,7 @@ npm run contract:deploy:testnet
 ```
 social_follow.move (standalone)
     ↑
-memeflow_social.move (depends on social_follow)
+cord_social.move (depends on social_follow)
 
 meme_token_factory.move (standalone)
     ↑

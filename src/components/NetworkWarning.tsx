@@ -16,7 +16,7 @@ export const NetworkWarning: React.FC = () => {
     <InlineNotification
       type="warning"
       title="Network Configuration"
-      message="MemeFlow contracts are currently deployed on Devnet. Please ensure your wallet is connected to Devnet to interact with the contracts."
+      message="Cord contracts are currently deployed on Devnet. Please ensure your wallet is connected to Devnet to interact with the contracts."
       className="mb-4"
     >
       <div className="mt-3 p-3 bg-amber-100 rounded-md">

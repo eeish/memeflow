@@ -1,5 +1,6 @@
-// API service for MemeFlow backend
-const API_BASE_URL = 'http://localhost:3001/api';
+// API service for Cord backend
+// Use same hostname as frontend so it works from any device on the LAN
+const API_BASE_URL = `http://${window.location.hostname}:3001/api`;
 
 export interface User {
   id: string;
@@ -23,6 +24,9 @@ export interface UserProfile {
   display_name?: string;
   avatar_url?: string;
   token_symbol: string;
+  wallet_address?: string;
+  bio?: string;
+  followers_count?: number;
 }
 
 export interface Post {
@@ -32,11 +36,41 @@ export interface Post {
   media_urls: string[];
   content_blob_id?: string;
   content_protocol_version?: string;
+  /** SHA256 hash for on-chain attestation */
+  content_hash?: string;
+  /** Timestamp used in hash computation (Unix ms) */
+  hash_timestamp_ms?: number;
   likes_count: number;
   comments_count: number;
   reposts_count: number;
   created_at: string;
   updated_at: string;
+}
+
+/** Response from creating a post, includes hash info for on-chain attestation */
+export interface CreatePostResponse {
+  post: Post;
+  /** Hash to submit on-chain: SHA256(author[32] || timestamp_ms[8 BE] || content) */
+  content_hash: string;
+  /** Timestamp used in hash computation (Unix milliseconds) */
+  timestamp_ms: number;
+  /** Hash as bytes array for Move contract */
+  content_hash_bytes: number[];
+}
+
+/** Request to verify a post hash */
+export interface VerifyPostHashRequest {
+  post_id: string;
+  content_hash: string;
+}
+
+/** Response from hash verification */
+export interface VerifyPostHashResponse {
+  valid: boolean;
+  post_id: string;
+  author: string;
+  timestamp_ms: number;
+  content_preview: string;
 }
 
 export interface PostWithAuthor {
@@ -69,6 +103,12 @@ export interface FollowStatusResponse {
   is_following: boolean;
   followers_count: number;
   following_count: number;
+}
+
+export interface UsernameCheckResponse {
+  available: boolean;
+  normalized: string;
+  error?: string;
 }
 
 // Media upload types (R2)
@@ -113,6 +153,15 @@ class ApiService {
   }
 
   // User endpoints
+
+  /**
+   * Check if a username is available and valid.
+   * Returns validation errors if the username is invalid or already taken.
+   */
+  async checkUsername(username: string): Promise<ApiResponse<UsernameCheckResponse>> {
+    return this.request<UsernameCheckResponse>(`/users/check-username/${encodeURIComponent(username)}`);
+  }
+
   async createUser(userData: {
     wallet_address?: string;
     email?: string;
@@ -132,7 +181,7 @@ class ApiService {
   }
 
   async updateUserProfile(userId: string, profileData: {
-    display_name?: string;
+    username?: string;
     bio?: string;
     avatar_url?: string;
   }): Promise<ApiResponse<User>> {
@@ -142,19 +191,44 @@ class ApiService {
     });
   }
 
+  async getUserPosts(userId: string, limit = 20, offset = 0): Promise<ApiResponse<PostWithAuthor[]>> {
+    return this.request<PostWithAuthor[]>(`/users/${userId}/posts?limit=${limit}&offset=${offset}`);
+  }
+
   // Post endpoints
   async getPosts(limit = 20, offset = 0): Promise<ApiResponse<PostWithAuthor[]>> {
     return this.request<PostWithAuthor[]>(`/posts?limit=${limit}&offset=${offset}`);
   }
 
+  /**
+   * Create a post and get hash info for on-chain attestation.
+   *
+   * The response includes:
+   * - post: The created post object
+   * - content_hash: SHA256 hash to submit on-chain
+   * - timestamp_ms: Timestamp used in hash computation
+   * - content_hash_bytes: Hash as byte array for Move contract
+   */
   async createPost(postData: {
     author_id: string;
+    wallet_address: string;
     content: string;
     media_urls?: string[];
-  }): Promise<ApiResponse<Post>> {
-    return this.request<Post>('/posts', {
+  }): Promise<ApiResponse<CreatePostResponse>> {
+    return this.request<CreatePostResponse>('/posts', {
       method: 'POST',
       body: JSON.stringify(postData),
+    });
+  }
+
+  /**
+   * Verify a post's content hash against stored data.
+   * Used to verify on-chain attestations.
+   */
+  async verifyPostHash(request: VerifyPostHashRequest): Promise<ApiResponse<VerifyPostHashResponse>> {
+    return this.request<VerifyPostHashResponse>('/posts/verify-hash', {
+      method: 'POST',
+      body: JSON.stringify(request),
     });
   }
 
@@ -195,6 +269,11 @@ class ApiService {
   // News feed endpoint
   async getNewsFeed(userId: string, limit = 20, offset = 0): Promise<ApiResponse<PostWithAuthor[]>> {
     return this.request<PostWithAuthor[]>(`/users/${userId}/feed?limit=${limit}&offset=${offset}`);
+  }
+
+  // Get posts by a specific user
+  async getUserPosts(userId: string, limit = 20, offset = 0): Promise<ApiResponse<PostWithAuthor[]>> {
+    return this.request<PostWithAuthor[]>(`/users/${userId}/posts?limit=${limit}&offset=${offset}`);
   }
 
   // Notification endpoints

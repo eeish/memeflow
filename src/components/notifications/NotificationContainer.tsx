@@ -3,7 +3,7 @@ import { useNotifications, setGlobalNotificationContext } from '../../contexts/N
 import { ToastNotification } from './ToastNotification';
 import { InlineNotification } from './InlineNotification';
 import { BannerNotification } from './BannerNotification';
-import { Settings } from 'lucide-react';
+import { Settings } from '../ui-simple/Icons';
 import { cn } from '../../lib/utils';
 
 export const NotificationContainer: React.FC = () => {

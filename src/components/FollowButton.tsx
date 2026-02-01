@@ -3,7 +3,7 @@ import { Button } from './ui-simple/Button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui-simple/Dialog';
 import { Alert, AlertDescription } from './ui-simple/Alert';
 import { Badge } from './ui-simple/Badge';
-import { UserPlus, UserMinus, Loader2, Sparkles, DollarSign } from 'lucide-react';
+import { UserPlus, UserMinus, Loader2, Sparkles, DollarSign } from './ui-simple/Icons';
 import { useSocialFollow } from '../hooks/useSocialFollow';
 
 interface FollowButtonProps {

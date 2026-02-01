@@ -33,9 +33,9 @@ impl R2Client {
         // Construct R2 endpoint URL
         let endpoint_url = format!("https://{}.r2.cloudflarestorage.com", account_id);
 
-        log::info!("Initializing R2 client with endpoint: {}", endpoint_url);
-        log::info!("R2 bucket: {}", bucket_name);
-        log::info!("R2 public domain: {}", public_domain);
+        tracing::info!("Initializing R2 client with endpoint: {}", endpoint_url);
+        tracing::info!("R2 bucket: {}", bucket_name);
+        tracing::info!("R2 public domain: {}", public_domain);
 
         // Create AWS credentials
         let credentials = Credentials::new(
@@ -79,7 +79,7 @@ impl R2Client {
         // Calculate checksum
         let checksum = self.calculate_checksum(&file_data);
 
-        log::info!(
+        tracing::info!(
             "Uploading file to R2: key={}, size={} bytes, content_type={}",
             file_key,
             file_data.len(),
@@ -100,7 +100,7 @@ impl R2Client {
         // Construct public URL
         let public_url = format!("{}/{}", self.public_url_base, file_key);
 
-        log::info!("File uploaded successfully: {}", public_url);
+        tracing::info!("File uploaded successfully: {}", public_url);
 
         Ok((file_key, public_url, checksum))
     }

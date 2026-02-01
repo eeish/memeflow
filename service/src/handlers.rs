@@ -1,12 +1,12 @@
-use crate::{models::*, sui_verification::AddressVerificationResult, AppState};
+use crate::{models::*, username_validation, profile_validation, AppState};
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Multipart, Path, Query, State},
     http::StatusCode,
     response::Json,
 };
-use serde::Deserialize;
-use uuid::Uuid;
-
+use serde::{Deserialize, Serialize};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use sha2::{Digest, Sha256};
 #[derive(Deserialize)]
 pub struct PlazaQuery {
     pub limit: Option<i32>,
@@ -15,7 +15,207 @@ pub struct PlazaQuery {
 
 // Health check endpoint
 pub async fn health_check() -> Json<ApiResponse<String>> {
-    Json(ApiResponse::success("MemeFlow Service is running! 🚀".to_string()))
+    Json(ApiResponse::success("Cord Service is running! 🚀".to_string()))
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ZkLoginSaltRequest {
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZkLoginProofRequest {
+    pub jwt: String,
+    #[serde(alias = "extended_ephemeral_public_key")]
+    pub extended_ephemeral_public_key: String,
+    #[serde(alias = "max_epoch")]
+    pub max_epoch: u64,
+    #[serde(alias = "jwt_randomness")]
+    pub jwt_randomness: String,
+    pub salt: String,
+    #[serde(alias = "key_claim_name")]
+    pub key_claim_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ZkLoginJwtClaims {
+    sub: String,
+    iss: Option<String>,
+    aud: Option<String>,
+}
+
+fn decode_jwt_claims(token: &str) -> Result<ZkLoginJwtClaims, String> {
+    let mut parts = token.split('.');
+    let _header = parts.next().ok_or("JWT missing header segment")?;
+    let payload = parts.next().ok_or("JWT missing payload segment")?;
+    let _signature = parts.next().ok_or("JWT missing signature segment")?;
+
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|e| format!("Failed to base64 decode JWT payload: {e}"))?;
+
+    serde_json::from_slice::<ZkLoginJwtClaims>(&payload_bytes)
+        .map_err(|e| format!("Failed to parse JWT payload JSON: {e}"))
+}
+
+fn derive_local_salt(token: &str) -> Result<String, String> {
+    let secret = std::env::var("ZKLOGIN_SALT_SECRET")
+        .map_err(|_| "ZKLOGIN_SALT_SECRET is not set".to_string())?;
+
+    let claims = decode_jwt_claims(token)?;
+
+    if claims.sub.is_empty() {
+        return Err("JWT missing sub claim".to_string());
+    }
+
+    if let Ok(expected_aud) = std::env::var("ZKLOGIN_ALLOWED_AUD") {
+        if let Some(aud) = &claims.aud {
+            if aud != &expected_aud {
+                return Err("JWT aud claim does not match ZKLOGIN_ALLOWED_AUD".to_string());
+            }
+        } else {
+            return Err("JWT missing aud claim".to_string());
+        }
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(secret.as_bytes());
+    hasher.update(b":");
+    hasher.update(claims.sub.as_bytes());
+    if let Some(iss) = claims.iss {
+        hasher.update(b":");
+        hasher.update(iss.as_bytes());
+    }
+    if let Some(aud) = claims.aud {
+        hasher.update(b":");
+        hasher.update(aud.as_bytes());
+    }
+
+    let digest = hasher.finalize();
+    let salt_bytes = &digest[..16];
+    Ok(format!("0x{}", hex::encode(salt_bytes)))
+}
+
+// Proxy zkLogin salt request to Mysten service to avoid CORS in browser
+pub async fn zklogin_salt_proxy(
+    Json(request): Json<ZkLoginSaltRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let mode = std::env::var("ZKLOGIN_SALT_MODE").unwrap_or_else(|_| "proxy".to_string());
+    if mode == "local" {
+        match derive_local_salt(&request.token) {
+            Ok(salt) => {
+                return Ok(Json(serde_json::json!({ "salt": salt })));
+            }
+            Err(message) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": message })),
+                ));
+            }
+        }
+    }
+
+    let url = std::env::var("ZKLOGIN_SALT_URL")
+        .unwrap_or_else(|_| "https://salt.api.mystenlabs.com/get_salt".to_string());
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| {
+            tracing::error!("zkLogin salt proxy request failed: {}", e);
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": "Upstream request failed" })),
+            )
+        })?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_else(|_| "<unreadable body>".to_string());
+        tracing::error!(
+            "zkLogin salt proxy upstream error: status={} body={}",
+            status,
+            body
+        );
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": "Upstream error",
+                "upstream_status": status.as_u16(),
+                "upstream_body": body,
+            })),
+        ));
+    }
+
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| {
+            tracing::error!("zkLogin salt proxy response decode failed: {}", e);
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": "Upstream response decode failed" })),
+            )
+        })?;
+
+    Ok(Json(body))
+}
+
+// Proxy zkLogin proof request to Mysten prover to avoid CORS in browser
+pub async fn zklogin_proof_proxy(
+    Json(request): Json<ZkLoginProofRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let url = std::env::var("ZKLOGIN_PROVER_URL")
+        .unwrap_or_else(|_| "https://prover-dev.mystenlabs.com/v1".to_string());
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| {
+            tracing::error!("zkLogin prover proxy request failed: {}", e);
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": "Upstream request failed" })),
+            )
+        })?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_else(|_| "<unreadable body>".to_string());
+        tracing::error!(
+            "zkLogin prover proxy upstream error: status={} body={}",
+            status,
+            body
+        );
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": "Upstream error",
+                "upstream_status": status.as_u16(),
+                "upstream_body": body,
+            })),
+        ));
+    }
+
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| {
+            tracing::error!("zkLogin prover proxy response decode failed: {}", e);
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": "Upstream response decode failed" })),
+            )
+        })?;
+
+    Ok(Json(body))
 }
 
 // Plaza - Global feed endpoint (Twitter-like public timeline)
@@ -23,319 +223,496 @@ pub async fn get_plaza_posts(
     State(app_state): State<AppState>,
     Query(params): Query<PlazaQuery>,
 ) -> Json<ApiResponse<Vec<PostWithAuthor>>> {
-    log::info!("Getting plaza posts with limit={:?}, offset={:?}", 
+    tracing::info!("Getting plaza posts with limit={:?}, offset={:?}", 
         params.limit, params.offset);
     
     match app_state.db.get_plaza_posts(params.limit, params.offset).await {
         Ok(posts) => {
-            log::info!("Retrieved {} posts for plaza", posts.len());
+            tracing::info!("Retrieved {} posts for plaza", posts.len());
             Json(ApiResponse::success(posts))
         }
         Err(e) => {
-            log::error!("Failed to get plaza posts: {}", e);
+            tracing::error!("Failed to get plaza posts: {}", e);
             Json(ApiResponse::error("Failed to retrieve plaza posts".to_string()))
         }
     }
 }
 
-// User endpoints
+// User verification endpoints (required for authentication)
+pub async fn check_user_exists_by_address(
+    State(app_state): State<AppState>,
+    Path(address): Path<String>,
+) -> Json<ApiResponse<bool>> {
+    tracing::info!("Checking if user exists with address: {}", address);
+    
+    match app_state.db.user_exists_by_address(&address).await {
+        Ok(exists) => {
+            Json(ApiResponse::success(exists))
+        }
+        Err(e) => {
+            tracing::error!("Failed to check user existence: {}", e);
+            Json(ApiResponse::error("Failed to check user existence".to_string()))
+        }
+    }
+}
+
+pub async fn get_user_by_address(
+    State(app_state): State<AppState>,
+    Path(address): Path<String>,
+) -> Json<ApiResponse<User>> {
+    tracing::info!("Getting user by address: {}", address);
+
+    match app_state.db.get_user_by_address(&address).await {
+        Ok(Some(user)) => {
+            Json(ApiResponse::success(user))
+        }
+        Ok(None) => {
+            Json(ApiResponse::error("User not found".to_string()))
+        }
+        Err(e) => {
+            tracing::error!("Failed to get user by address: {}", e);
+            Json(ApiResponse::error("Failed to retrieve user".to_string()))
+        }
+    }
+}
+
+pub async fn get_user_by_id(
+    State(app_state): State<AppState>,
+    Path(user_id): Path<String>,
+) -> Json<ApiResponse<User>> {
+    tracing::info!("Getting user by id: {}", user_id);
+
+    match app_state.db.get_user_by_id(&user_id).await {
+        Ok(Some(user)) => {
+            Json(ApiResponse::success(user))
+        }
+        Ok(None) => {
+            Json(ApiResponse::error("User not found".to_string()))
+        }
+        Err(e) => {
+            tracing::error!("Failed to get user by id: {}", e);
+            Json(ApiResponse::error("Failed to retrieve user".to_string()))
+        }
+    }
+}
+
+/// Response for username availability check
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsernameCheckResponse {
+    pub available: bool,
+    pub normalized: String,
+    pub error: Option<String>,
+}
+
+/// Check if a username is available and valid
+pub async fn check_username_available(
+    State(app_state): State<AppState>,
+    Path(username): Path<String>,
+) -> Json<ApiResponse<UsernameCheckResponse>> {
+    tracing::info!("Checking username availability: {}", username);
+
+    // Validate username format
+    let normalized = match username_validation::validate_username(&username) {
+        Ok(name) => name,
+        Err(e) => {
+            tracing::info!("Username validation failed: {}", e);
+            return Json(ApiResponse::success(UsernameCheckResponse {
+                available: false,
+                normalized: username.trim().to_lowercase(),
+                error: Some(e.to_string()),
+            }));
+        }
+    };
+
+    // Check if username is already taken
+    match app_state.db.username_exists(&normalized).await {
+        Ok(exists) => {
+            let response = UsernameCheckResponse {
+                available: !exists,
+                normalized,
+                error: if exists {
+                    Some("This username is already taken".to_string())
+                } else {
+                    None
+                },
+            };
+            Json(ApiResponse::success(response))
+        }
+        Err(e) => {
+            tracing::error!("Failed to check username: {}", e);
+            Json(ApiResponse::error("Failed to check username availability".to_string()))
+        }
+    }
+}
+
 pub async fn create_user(
     State(app_state): State<AppState>,
-    Json(request): Json<CreateUserRequest>,
+    Json(mut request): Json<CreateUserRequest>,
 ) -> Json<ApiResponse<User>> {
-    log::info!("Creating new user: wallet_address={:?}, username={}", 
+    tracing::info!("Creating new user: wallet_address={:?}, username={}",
         request.wallet_address, request.username);
-    
-    // If wallet address is provided, verify it first
-    if let Some(ref wallet_address) = request.wallet_address {
-        // Validate address format
-        if !crate::sui_verification::SuiVerification::validate_address_format(wallet_address) {
-            log::warn!("Invalid wallet address format: {}", wallet_address);
-            return Json(ApiResponse::error("Invalid wallet address format".to_string()));
+
+    // Validate and normalize username
+    let normalized_username = match username_validation::validate_username(&request.username) {
+        Ok(name) => name,
+        Err(e) => {
+            tracing::warn!("Username validation failed: {}", e);
+            return Json(ApiResponse::error(e.to_string()));
         }
-        
-        // Check if user already exists with this address
-        let db_read = app_state.db.read().await;
-        match app_state.sui_verification.is_new_user_in_db(&db_read, wallet_address).await {
-            Ok(is_new) => {
-                if !is_new {
-                    log::warn!("User already exists with wallet address: {}", wallet_address);
-                    return Json(ApiResponse::error("User already exists with this wallet address".to_string()));
-                }
-            }
-            Err(e) => {
-                log::error!("Failed to check user existence: {}", e);
-                return Json(ApiResponse::error("Failed to check user existence".to_string()));
-            }
+    };
+
+    // Check if username is already taken
+    match app_state.db.username_exists(&normalized_username).await {
+        Ok(true) => {
+            tracing::warn!("Username already taken: {}", normalized_username);
+            return Json(ApiResponse::error("This username is already taken".to_string()));
         }
-        drop(db_read);
-        
-        // Verify the address and get on-chain data
-        let db_read = app_state.db.read().await;
-        let verification_result = app_state.sui_verification
-            .verify_user_address(&db_read, wallet_address)
-            .await;
-        drop(db_read);
-        
-        if !verification_result.is_valid {
-            log::warn!("Address verification failed: {:?}", verification_result.error);
-            return Json(ApiResponse::error("Address verification failed".to_string()));
+        Ok(false) => {}
+        Err(e) => {
+            tracing::error!("Failed to check username: {}", e);
+            return Json(ApiResponse::error("Failed to validate username".to_string()));
         }
-        
-        // Log verification details for debugging
-        log::info!("Address verification successful: is_new_user={}, on_chain_active={:?}", 
-            verification_result.is_new_user,
-            verification_result.on_chain_data.as_ref().map(|d| d.is_active));
     }
-    
-    let mut db = app_state.db.write().await;
-    
-    match db.create_user(request).await {
+
+    // Update request with normalized username
+    request.username = normalized_username;
+
+    match app_state.db.create_user(request).await {
         Ok(user) => {
-            log::info!("Successfully created user: id={}, username={}, token_symbol={}", 
-                user.id, user.username, user.token_symbol);
+            tracing::info!("User created successfully: {}", user.id);
             Json(ApiResponse::success(user))
         }
         Err(e) => {
-            log::error!("Failed to create user: {}", e);
+            tracing::error!("Failed to create user: {}", e);
             Json(ApiResponse::error("Failed to create user".to_string()))
         }
     }
 }
 
-pub async fn get_user(
-    State(app_state): State<AppState>,
-    Path(user_id): Path<Uuid>,
-) -> Result<Json<ApiResponse<User>>, StatusCode> {
-    let db = app_state.db.read().await;
-    
-    match db.get_user(&user_id).await {
-        Some(user) => Ok(Json(ApiResponse::success(user))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+/// Request body for updating user profile
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUserProfileRequest {
+    pub username: Option<String>,
+    pub bio: Option<String>,
+    pub avatar_url: Option<String>,
 }
 
+/// Update user profile (username, bio, avatar)
 pub async fn update_user_profile(
     State(app_state): State<AppState>,
-    Path(user_id): Path<Uuid>,
-    Json(request): Json<UpdateProfileRequest>,
-) -> Result<Json<ApiResponse<User>>, StatusCode> {
-    let mut db = app_state.db.write().await;
-    
-    match db.update_user_profile(&user_id, request).await {
-        Ok(Some(user)) => Ok(Json(ApiResponse::success(user))),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
+    Path(user_id): Path<String>,
+    Json(request): Json<UpdateUserProfileRequest>,
+) -> Json<ApiResponse<User>> {
+    tracing::info!("Updating profile for user: {}", user_id);
+
+    // Validate username if provided
+    let validated_username = if let Some(ref username) = request.username {
+        match profile_validation::validate_username_for_update(username) {
+            Ok(normalized) => {
+                // Check if username is available (excluding current user)
+                match app_state.db.username_exists_excluding_user(&normalized, &user_id).await {
+                    Ok(true) => {
+                        tracing::warn!("Username already taken: {}", normalized);
+                        return Json(ApiResponse::error("This username is already taken".to_string()));
+                    }
+                    Ok(false) => Some(normalized),
+                    Err(e) => {
+                        tracing::error!("Failed to check username availability: {}", e);
+                        return Json(ApiResponse::error("Failed to validate username".to_string()));
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Username validation failed: {}", e);
+                return Json(ApiResponse::error(e.to_string()));
+            }
+        }
+    } else {
+        None
+    };
+
+    // Validate bio if provided
+    let validated_bio = if let Some(ref bio) = request.bio {
+        match profile_validation::validate_bio(bio) {
+            Ok(normalized) => Some(normalized),
+            Err(e) => {
+                tracing::warn!("Bio validation failed: {}", e);
+                return Json(ApiResponse::error(e.to_string()));
+            }
+        }
+    } else {
+        None
+    };
+
+    // Validate avatar_url if provided
+    let validated_avatar = if let Some(ref avatar_url) = request.avatar_url {
+        match profile_validation::validate_avatar_url(avatar_url) {
+            Ok(url) => url,
+            Err(e) => {
+                tracing::warn!("Avatar URL validation failed: {}", e);
+                return Json(ApiResponse::error(e.to_string()));
+            }
+        }
+    } else {
+        None
+    };
+
+    // Update in database
+    match app_state.db.update_user_profile(
+        &user_id,
+        validated_username,
+        validated_bio,
+        validated_avatar,
+    ).await {
+        Ok(user) => {
+            tracing::info!("Profile updated successfully for user: {}", user_id);
+            Json(ApiResponse::success(user))
+        }
         Err(e) => {
-            log::error!("Failed to update user profile: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            tracing::error!("Failed to update profile: {}", e);
+            Json(ApiResponse::error("Failed to update profile".to_string()))
         }
     }
 }
 
-// Post endpoints
-#[derive(Deserialize)]
-pub struct GetPostsQuery {
-    pub limit: Option<usize>,
-    pub offset: Option<usize>,
-}
-
-pub async fn get_posts(
+// News feed endpoint (for now, returns same as Plaza but can be personalized later)
+pub async fn get_news_feed(
     State(app_state): State<AppState>,
-    Query(params): Query<GetPostsQuery>,
+    Path(user_id): Path<String>,
+    Query(params): Query<PlazaQuery>,
 ) -> Json<ApiResponse<Vec<PostWithAuthor>>> {
-    let db = app_state.db.read().await;
-    
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
-    
-    let posts = db.get_posts(limit, offset).await;
-    Json(ApiResponse::success(posts))
+    tracing::info!("Getting news feed for user: {} with limit={:?}, offset={:?}",
+        user_id, params.limit, params.offset);
+
+    // For now, return the same as Plaza (all posts)
+    // In the future, this could be personalized based on who the user follows
+    match app_state.db.get_plaza_posts(params.limit, params.offset).await {
+        Ok(posts) => {
+            tracing::info!("Retrieved {} posts for user feed", posts.len());
+            Json(ApiResponse::success(posts))
+        }
+        Err(e) => {
+            tracing::error!("Failed to get user feed: {}", e);
+            Json(ApiResponse::error("Failed to retrieve news feed".to_string()))
+        }
+    }
 }
 
+// Get posts by a specific user
+pub async fn get_user_posts(
+    State(app_state): State<AppState>,
+    Path(user_id): Path<String>,
+    Query(params): Query<PlazaQuery>,
+) -> Json<ApiResponse<Vec<PostWithAuthor>>> {
+    tracing::info!("Getting posts for user {} with limit={:?}, offset={:?}",
+        user_id, params.limit, params.offset);
+
+    match app_state.db.get_user_posts(&user_id, params.limit, params.offset).await {
+        Ok(posts) => {
+            tracing::info!("Retrieved {} posts for user {}", posts.len(), user_id);
+            Json(ApiResponse::success(posts))
+        }
+        Err(e) => {
+            tracing::error!("Failed to get user posts: {}", e);
+            Json(ApiResponse::error("Failed to retrieve user posts".to_string()))
+        }
+    }
+}
+
+// Create post endpoint
+// Returns post with content_hash for on-chain attestation
 pub async fn create_post(
     State(app_state): State<AppState>,
     Json(request): Json<CreatePostRequest>,
-) -> Result<Json<ApiResponse<Post>>, StatusCode> {
-    let mut db = app_state.db.write().await;
-    
-    match db.create_post(request).await {
-        Ok(post) => Ok(Json(ApiResponse::success(post))),
+) -> Json<ApiResponse<CreatePostResponse>> {
+    tracing::info!("Creating new post: author_id={}, wallet={}, content_length={}",
+        request.author_id, request.wallet_address, request.content.len());
+
+    // Generate timestamp for hash computation (Unix milliseconds)
+    let timestamp_ms = chrono::Utc::now().timestamp_millis();
+
+    // Compute content hash: SHA256(author[32] || timestamp_ms[8 BE] || content[*])
+    let content_hash = match crate::post_hash::compute_content_hash(
+        &request.wallet_address,
+        timestamp_ms as u64,
+        &request.content,
+    ) {
+        Ok(hash) => hash,
         Err(e) => {
-            log::error!("Failed to create post: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            tracing::error!("Failed to compute content hash: {}", e);
+            return Json(ApiResponse::error(format!("Invalid wallet address: {}", e)));
+        }
+    };
+
+    // Get hash as bytes for Move contract
+    let content_hash_bytes = match hex::decode(&content_hash) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::error!("Failed to decode hash bytes: {}", e);
+            return Json(ApiResponse::error(format!("Hash encoding error: {}", e)));
+        }
+    };
+
+    tracing::info!("Computed content hash: {} (timestamp_ms={})", content_hash, timestamp_ms);
+
+    // Create post in database with hash
+    match app_state.db.create_post(request, Some(content_hash.clone()), Some(timestamp_ms)).await {
+        Ok(post) => {
+            tracing::info!("Post created successfully: id={}, hash={}",
+                post.id, content_hash);
+
+            let response = CreatePostResponse {
+                post,
+                content_hash,
+                timestamp_ms,
+                content_hash_bytes,
+            };
+
+            Json(ApiResponse::success(response))
+        }
+        Err(e) => {
+            tracing::error!("Failed to create post: {}", e);
+            Json(ApiResponse::error("Failed to create post".to_string()))
         }
     }
 }
 
+// Like post endpoint
 pub async fn like_post(
     State(app_state): State<AppState>,
-    Path(post_id): Path<Uuid>,
+    Path(post_id): Path<String>,
     Json(request): Json<LikeRequest>,
-) -> Result<Json<ApiResponse<bool>>, StatusCode> {
-    let mut db = app_state.db.write().await;
-    
-    match db.like_post(&post_id, &request.user_id).await {
-        Ok(liked) => Ok(Json(ApiResponse::success(liked))),
+) -> Json<ApiResponse<bool>> {
+    tracing::info!("Toggling like for post: {} by user: {}", post_id, request.user_id);
+
+    match app_state.db.like_post(&post_id, &request.user_id).await {
+        Ok(is_liked) => {
+            tracing::info!("Like toggled successfully: post={}, is_liked={}", post_id, is_liked);
+            Json(ApiResponse::success(is_liked))
+        }
         Err(e) => {
-            log::error!("Failed to like post: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            tracing::error!("Failed to toggle like: {}", e);
+            Json(ApiResponse::error("Failed to like post".to_string()))
         }
     }
 }
 
-pub async fn comment_post(
+// Verify post hash endpoint
+// Verifies that a given hash matches the stored post content
+pub async fn verify_post_hash(
     State(app_state): State<AppState>,
-    Path(_post_id): Path<Uuid>,
-    Json(_request): Json<CreateCommentRequest>,
-) -> Json<ApiResponse<String>> {
-    // TODO: Implement comment functionality
-    Json(ApiResponse::success("Comment functionality coming soon!".to_string()))
-}
+    Json(request): Json<VerifyPostHashRequest>,
+) -> Json<ApiResponse<VerifyPostHashResponse>> {
+    tracing::info!("Verifying post hash: post_id={}, hash={}", request.post_id, request.content_hash);
 
-// Token metadata endpoints
-pub async fn get_token_metadata(
-    State(app_state): State<AppState>,
-    Path(symbol): Path<String>,
-) -> Result<Json<ApiResponse<TokenMetadata>>, StatusCode> {
-    let db = app_state.db.read().await;
-    
-    match db.get_token_metadata(&symbol.to_uppercase()).await {
-        Some(metadata) => Ok(Json(ApiResponse::success(metadata))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
-}
-
-pub async fn update_token_metadata(
-    State(app_state): State<AppState>,
-    Path(symbol): Path<String>,
-    Json(request): Json<UpdateTokenMetadataRequest>,
-) -> Result<Json<ApiResponse<TokenMetadata>>, StatusCode> {
-    let mut db = app_state.db.write().await;
-    
-    match db.update_token_metadata(&symbol.to_uppercase(), request).await {
-        Ok(Some(metadata)) => Ok(Json(ApiResponse::success(metadata))),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(e) => {
-            log::error!("Failed to update token metadata: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+    // Get the post with author info
+    let post_with_author = match app_state.db.get_post_with_author(&request.post_id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            tracing::warn!("Post not found: {}", request.post_id);
+            return Json(ApiResponse::error("Post not found".to_string()));
         }
-    }
-}
-
-#[derive(Deserialize)]
-pub struct TrendingQuery {
-    pub limit: Option<usize>,
-}
-
-pub async fn get_trending_tokens(
-    State(app_state): State<AppState>,
-    Query(params): Query<TrendingQuery>,
-) -> Json<ApiResponse<Vec<TokenMetadata>>> {
-    let db = app_state.db.read().await;
-    
-    let limit = params.limit.unwrap_or(10).min(50);
-    let tokens = db.get_trending_tokens(limit).await;
-    
-    Json(ApiResponse::success(tokens))
-}
-
-// Search endpoints
-pub async fn search_users(
-    State(app_state): State<AppState>,
-    Query(params): Query<SearchQuery>,
-) -> Json<ApiResponse<Vec<UserProfile>>> {
-    let db = app_state.db.read().await;
-    
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
-    
-    let users = db.search_users(&params.q, limit, offset).await;
-    Json(ApiResponse::success(users))
-}
-
-pub async fn search_tokens(
-    State(app_state): State<AppState>,
-    Query(params): Query<SearchQuery>,
-) -> Json<ApiResponse<Vec<TokenMetadata>>> {
-    let db = app_state.db.read().await;
-    
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
-    
-    let tokens = db.search_tokens(&params.q, limit, offset).await;
-    Json(ApiResponse::success(tokens))
-}
-
-// Analytics endpoints
-pub async fn get_user_analytics(
-    State(app_state): State<AppState>,
-) -> Json<ApiResponse<Analytics>> {
-    let db = app_state.db.read().await;
-    
-    let total_users = db.users.len() as i64;
-    let total_posts = db.posts.len() as i64;
-    let total_tokens = db.token_metadata.len() as i64;
-    
-    // Get top users by followers
-    let mut users: Vec<_> = db.users.values().collect();
-    users.sort_by(|a, b| b.followers_count.cmp(&a.followers_count));
-    let top_users = users.into_iter()
-        .take(5)
-        .map(|user| UserProfile {
-            id: user.id,
-            username: user.username.clone(),
-            display_name: user.display_name.clone(),
-            avatar_url: user.avatar_url.clone(),
-            token_symbol: user.token_symbol.clone(),
-        })
-        .collect();
-    
-    // Get top tokens by market cap
-    let top_tokens = db.get_trending_tokens(5).await;
-    
-    let analytics = Analytics {
-        total_users,
-        total_posts,
-        total_tokens,
-        active_users_24h: total_users, // Simplified for demo
-        posts_24h: total_posts, // Simplified for demo
-        top_tokens,
-        top_users,
+        Err(e) => {
+            tracing::error!("Failed to get post: {}", e);
+            return Json(ApiResponse::error("Failed to retrieve post".to_string()));
+        }
     };
-    
-    Json(ApiResponse::success(analytics))
-}
 
-pub async fn get_token_analytics(
-    State(_app_state): State<AppState>,
-) -> Json<ApiResponse<String>> {
-    // TODO: Implement detailed token analytics
-    Json(ApiResponse::success("Token analytics coming soon!".to_string()))
+    // Get author's wallet address
+    let wallet_address = match app_state.db.get_post_author_wallet(&request.post_id).await {
+        Ok(Some(addr)) => addr,
+        Ok(None) => {
+            tracing::warn!("Author wallet address not found for post: {}", request.post_id);
+            return Json(ApiResponse::error("Author wallet address not found".to_string()));
+        }
+        Err(e) => {
+            tracing::error!("Failed to get author wallet: {}", e);
+            return Json(ApiResponse::error("Failed to retrieve author wallet".to_string()));
+        }
+    };
+
+    // Check if post has stored hash info
+    let (stored_hash, timestamp_ms) = match (&post_with_author.post.content_hash, post_with_author.post.hash_timestamp_ms) {
+        (Some(h), Some(t)) => (h.clone(), t),
+        _ => {
+            tracing::warn!("Post has no hash info: {}", request.post_id);
+            return Json(ApiResponse::error("Post has no hash info (created before hash feature)".to_string()));
+        }
+    };
+
+    // Verify the hash matches
+    let valid = match crate::post_hash::verify_content_hash(
+        &request.content_hash,
+        &wallet_address,
+        timestamp_ms as u64,
+        &post_with_author.post.content,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("Hash verification error: {}", e);
+            return Json(ApiResponse::error(format!("Hash verification error: {}", e)));
+        }
+    };
+
+    // Also check against stored hash for consistency
+    let matches_stored = request.content_hash == stored_hash;
+
+    if valid != matches_stored {
+        tracing::warn!("Hash verification inconsistency: computed={}, matches_stored={}", valid, matches_stored);
+    }
+
+    let content_preview = if post_with_author.post.content.len() > 100 {
+        format!("{}...", &post_with_author.post.content[..100])
+    } else {
+        post_with_author.post.content.clone()
+    };
+
+    let response = VerifyPostHashResponse {
+        valid,
+        post_id: request.post_id,
+        author: wallet_address,
+        timestamp_ms,
+        content_preview,
+    };
+
+    tracing::info!("Hash verification result: valid={}", valid);
+    Json(ApiResponse::success(response))
 }
 
 // Follow/Unfollow endpoints
+#[derive(Deserialize)]
+pub struct FollowRequest {
+    pub follower_id: uuid::Uuid,
+}
+
+#[derive(Serialize)]
+pub struct FollowStatusResponse {
+    pub is_following: bool,
+    pub followers_count: i64,
+    pub following_count: i64,
+}
+
 pub async fn follow_user(
     State(app_state): State<AppState>,
-    Path(user_id): Path<Uuid>,
+    Path(user_id): Path<uuid::Uuid>,
     Json(request): Json<FollowRequest>,
 ) -> Result<Json<ApiResponse<FollowStatusResponse>>, StatusCode> {
-    let mut db = app_state.db.write().await;
-    
-    match db.follow_user(&request.follower_id, &user_id).await {
-        Ok(followed) => {
-            let user = db.get_user(&user_id).await;
-            let follower = db.get_user(&request.follower_id).await;
-            
+    tracing::info!("Follow request: {} -> {}", request.follower_id, user_id);
+
+    match app_state.db.follow_user(&request.follower_id, &user_id).await {
+        Ok(_followed) => {
+            let (followers_count, _) = app_state.db.get_follow_counts(&user_id).await;
+            let (_, following_count) = app_state.db.get_follow_counts(&request.follower_id).await;
+
             let response = FollowStatusResponse {
-                is_following: followed,
-                followers_count: user.map(|u| u.followers_count).unwrap_or(0),
-                following_count: follower.map(|u| u.following_count).unwrap_or(0),
+                is_following: true,
+                followers_count,
+                following_count,
             };
-            
             Ok(Json(ApiResponse::success(response)))
         }
         Err(e) => {
-            log::error!("Failed to follow user: {}", e);
+            tracing::error!("Failed to follow user: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -343,26 +720,25 @@ pub async fn follow_user(
 
 pub async fn unfollow_user(
     State(app_state): State<AppState>,
-    Path(user_id): Path<Uuid>,
+    Path(user_id): Path<uuid::Uuid>,
     Json(request): Json<FollowRequest>,
 ) -> Result<Json<ApiResponse<FollowStatusResponse>>, StatusCode> {
-    let mut db = app_state.db.write().await;
-    
-    match db.unfollow_user(&request.follower_id, &user_id).await {
-        Ok(unfollowed) => {
-            let user = db.get_user(&user_id).await;
-            let follower = db.get_user(&request.follower_id).await;
-            
+    tracing::info!("Unfollow request: {} -> {}", request.follower_id, user_id);
+
+    match app_state.db.unfollow_user(&request.follower_id, &user_id).await {
+        Ok(_unfollowed) => {
+            let (followers_count, _) = app_state.db.get_follow_counts(&user_id).await;
+            let (_, following_count) = app_state.db.get_follow_counts(&request.follower_id).await;
+
             let response = FollowStatusResponse {
-                is_following: !unfollowed,
-                followers_count: user.map(|u| u.followers_count).unwrap_or(0),
-                following_count: follower.map(|u| u.following_count).unwrap_or(0),
+                is_following: false,
+                followers_count,
+                following_count,
             };
-            
             Ok(Json(ApiResponse::success(response)))
         }
         Err(e) => {
-            log::error!("Failed to unfollow user: {}", e);
+            tracing::error!("Failed to unfollow user: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -370,164 +746,291 @@ pub async fn unfollow_user(
 
 pub async fn get_follow_status(
     State(app_state): State<AppState>,
-    Path(user_id): Path<Uuid>,
-    Query(follower_query): Query<std::collections::HashMap<String, String>>,
+    Path(user_id): Path<uuid::Uuid>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<ApiResponse<FollowStatusResponse>>, StatusCode> {
-    let follower_id_str = follower_query.get("follower_id").ok_or(StatusCode::BAD_REQUEST)?;
-    let follower_id = Uuid::parse_str(follower_id_str).map_err(|_| StatusCode::BAD_REQUEST)?;
-    
-    let db = app_state.db.read().await;
-    
-    let is_following = db.is_following(&follower_id, &user_id).await;
-    let user = db.get_user(&user_id).await;
-    let follower = db.get_user(&follower_id).await;
-    
+    let follower_id_str = params.get("follower_id").ok_or(StatusCode::BAD_REQUEST)?;
+    let follower_id = uuid::Uuid::parse_str(follower_id_str).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let is_following = app_state.db.is_following(&follower_id, &user_id).await;
+    let (followers_count, _) = app_state.db.get_follow_counts(&user_id).await;
+    let (_, following_count) = app_state.db.get_follow_counts(&follower_id).await;
+
     let response = FollowStatusResponse {
         is_following,
-        followers_count: user.map(|u| u.followers_count).unwrap_or(0),
-        following_count: follower.map(|u| u.following_count).unwrap_or(0),
+        followers_count,
+        following_count,
     };
-    
+
     Ok(Json(ApiResponse::success(response)))
 }
 
-pub async fn get_user_followers(
-    State(app_state): State<AppState>,
-    Path(user_id): Path<Uuid>,
-) -> Json<ApiResponse<Vec<UserProfile>>> {
-    let db = app_state.db.read().await;
-    let followers = db.get_followers(&user_id).await;
-    Json(ApiResponse::success(followers))
+// ============================================================================
+// Media Upload Endpoints (R2)
+// ============================================================================
+
+fn api_error<T>(status: StatusCode, message: &str) -> (StatusCode, Json<ApiResponse<T>>) {
+    (status, Json(ApiResponse::error(message.to_string())))
 }
 
-pub async fn get_user_following(
+/// Upload a single media file to R2
+pub async fn upload_media(
     State(app_state): State<AppState>,
-    Path(user_id): Path<Uuid>,
-) -> Json<ApiResponse<Vec<UserProfile>>> {
-    let db = app_state.db.read().await;
-    let following = db.get_following(&user_id).await;
-    Json(ApiResponse::success(following))
-}
+    mut multipart: Multipart,
+) -> Result<Json<ApiResponse<MediaUploadResponse>>, (StatusCode, Json<ApiResponse<MediaUploadResponse>>)> {
+    tracing::info!("📤 Media upload request received");
 
-// News feed endpoint
-pub async fn get_news_feed(
-    State(app_state): State<AppState>,
-    Path(user_id): Path<Uuid>,
-    Query(params): Query<GetPostsQuery>,
-) -> Json<ApiResponse<Vec<PostWithAuthor>>> {
-    let db = app_state.db.read().await;
-    
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
-    
-    let feed = db.get_news_feed(&user_id, limit, offset).await;
-    Json(ApiResponse::success(feed))
-}
-
-// Notification endpoints
-pub async fn get_user_notifications(
-    State(app_state): State<AppState>,
-    Path(user_id): Path<Uuid>,
-) -> Json<ApiResponse<Vec<Notification>>> {
-    let db = app_state.db.read().await;
-    let notifications = db.get_user_notifications(&user_id).await;
-    Json(ApiResponse::success(notifications))
-}
-
-pub async fn mark_notification_read(
-    State(app_state): State<AppState>,
-    Path(notification_id): Path<Uuid>,
-) -> Result<Json<ApiResponse<String>>, StatusCode> {
-    let mut db = app_state.db.write().await;
-    
-    match db.mark_notification_read(&notification_id).await {
-        Ok(true) => Ok(Json(ApiResponse::success("Notification marked as read".to_string()))),
-        Ok(false) => Err(StatusCode::NOT_FOUND),
-        Err(e) => {
-            log::error!("Failed to mark notification as read: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-// Sui Address Verification Endpoints
-
-/// Verify a Sui address and check if user is new
-pub async fn verify_sui_address(
-    State(app_state): State<AppState>,
-    Path(address): Path<String>,
-) -> Json<ApiResponse<AddressVerificationResult>> {
-    log::info!("Verifying Sui address: {}", address);
-    
-    let db = app_state.db.read().await;
-    let result = app_state.sui_verification
-        .verify_user_address(&db, &address)
-        .await;
-    
-    log::info!("Address verification result for {}: new_user={}, valid={}", 
-        address, result.is_new_user, result.is_valid);
-    
-    Json(ApiResponse::success(result))
-}
-
-/// Check if a user exists by Sui address (lightweight check)
-pub async fn check_user_exists_by_address(
-    State(app_state): State<AppState>,
-    Path(address): Path<String>,
-) -> Result<Json<ApiResponse<bool>>, StatusCode> {
-    log::info!("Checking if user exists for address: {}", address);
-    
-    // Validate address format first
-    if !crate::sui_verification::SuiVerification::validate_address_format(&address) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    
-    let db = app_state.db.read().await;
-    
-    match app_state.sui_verification.is_new_user_in_db(&db, &address).await {
-        Ok(is_new) => {
-            let user_exists = !is_new;
-            log::info!("User exists check for {}: {}", address, user_exists);
-            Ok(Json(ApiResponse::success(user_exists)))
-        }
-        Err(e) => {
-            log::error!("Error checking user existence: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Get user by Sui address
-pub async fn get_user_by_address(
-    State(app_state): State<AppState>,
-    Path(address): Path<String>,
-) -> Result<Json<ApiResponse<User>>, StatusCode> {
-    log::info!("Getting user by address: {}", address);
-    
-    // Validate and normalize address
-    let normalized_address = match crate::sui_verification::SuiVerification::normalize_address(&address) {
-        Ok(addr) => addr,
-        Err(_) => return Err(StatusCode::BAD_REQUEST),
-    };
-    
-    let db = app_state.db.read().await;
-    
-    // Find user with matching wallet address
-    let user = db.users.values()
-        .find(|user| {
-            user.wallet_address.as_ref()
-                .and_then(|addr| crate::sui_verification::SuiVerification::normalize_address(addr).ok())
-                .as_ref() == Some(&normalized_address)
-        });
-    
-    match user {
-        Some(user) => {
-            log::info!("Found user for address {}: {}", address, user.username);
-            Ok(Json(ApiResponse::success(user.clone())))
-        }
+    // Check if R2 is configured
+    let r2_client = match &app_state.r2_client {
+        Some(client) => client,
         None => {
-            log::info!("No user found for address: {}", address);
-            Err(StatusCode::NOT_FOUND)
+            if let Some(message) = &app_state.r2_error {
+                tracing::error!("R2 client not configured: {}", message);
+                return Err(api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    &format!("R2 client not configured: {}", message),
+                ));
+            }
+            tracing::error!("R2 client not configured (no details)");
+            return Err(api_error(StatusCode::SERVICE_UNAVAILABLE, "R2 client not configured"));
+        }
+    };
+
+    // Parse multipart form data
+    let mut user_id: Option<String> = None;
+    let mut file_data: Option<Vec<u8>> = None;
+    let mut content_type: Option<String> = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        tracing::error!("Failed to read multipart field: {}", e);
+        api_error(StatusCode::BAD_REQUEST, "Failed to read multipart field")
+    })? {
+        let field_name = field.name().unwrap_or("").to_string();
+
+        match field_name.as_str() {
+            "file" => {
+                content_type = field
+                    .content_type()
+                    .map(|ct| ct.to_string());
+
+                let data = field.bytes().await.map_err(|e| {
+                    tracing::error!("Failed to read file data: {}", e);
+                    api_error(StatusCode::BAD_REQUEST, "Failed to read file data")
+                })?;
+
+                file_data = Some(data.to_vec());
+            }
+            "user_id" => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid user_id"))?;
+                user_id = Some(text);
+            }
+            _ => {}
         }
     }
+
+    // Validate required fields
+    let file_data = file_data.ok_or_else(|| {
+        tracing::error!("No file data in upload request");
+        api_error(StatusCode::BAD_REQUEST, "No file data in upload request")
+    })?;
+
+    let content_type = content_type.ok_or_else(|| {
+        tracing::error!("No content type in upload request");
+        api_error(StatusCode::BAD_REQUEST, "No content type in upload request")
+    })?;
+
+    let user_id = user_id.ok_or_else(|| {
+        tracing::error!("No user_id in upload request");
+        api_error(StatusCode::BAD_REQUEST, "No user_id in upload request")
+    })?;
+
+    // Validate content type
+    if !crate::r2_client::is_valid_content_type(&content_type) {
+        tracing::warn!("Invalid content type: {}", content_type);
+        return Err(api_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Unsupported content type",
+        ));
+    }
+
+    // Validate file size (10 MB for images, 50 MB for videos)
+    let max_size = if content_type.starts_with("video/") {
+        50 * 1024 * 1024
+    } else {
+        10 * 1024 * 1024
+    };
+
+    if file_data.len() > max_size {
+        tracing::warn!("File too large: {} bytes (max: {} bytes)", file_data.len(), max_size);
+        return Err(api_error(StatusCode::PAYLOAD_TOO_LARGE, "File too large"));
+    }
+
+    tracing::info!(
+        "Uploading file: user={}, size={} bytes, type={}",
+        user_id,
+        file_data.len(),
+        content_type
+    );
+
+    // Upload to R2
+    match r2_client.upload_file(file_data.clone(), &content_type, &user_id).await {
+        Ok((file_key, public_url, checksum)) => {
+            let response = MediaUploadResponse {
+                file_key,
+                public_url,
+                content_type,
+                size_bytes: file_data.len() as u64,
+                checksum,
+            };
+
+            tracing::info!("✅ Upload successful: {}", response.public_url);
+            Ok(Json(ApiResponse::success(response)))
+        }
+        Err(e) => {
+            tracing::error!("❌ Upload failed: {}", e);
+            Err(api_error(
+                StatusCode::BAD_GATEWAY,
+                "Failed to upload file to R2",
+            ))
+        }
+    }
+}
+
+/// Batch upload multiple media files to R2
+pub async fn batch_upload_media(
+    State(app_state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Json<ApiResponse<Vec<MediaUploadResponse>>>, (StatusCode, Json<ApiResponse<Vec<MediaUploadResponse>>>)> {
+    tracing::info!("📤 Batch media upload request received");
+    tracing::info!("Parsing multipart fields...");
+
+    // Check if R2 is configured
+    let r2_client = match &app_state.r2_client {
+        Some(client) => client,
+        None => {
+            if let Some(message) = &app_state.r2_error {
+                tracing::error!("R2 client not configured: {}", message);
+                return Err(api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    &format!("R2 client not configured: {}", message),
+                ));
+            }
+            tracing::error!("R2 client not configured (no details)");
+            return Err(api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "R2 client not configured",
+            ));
+        }
+    };
+
+    let mut files: Vec<(Vec<u8>, String)> = Vec::new(); // (data, content_type)
+    let mut user_id: Option<String> = None;
+
+    // Parse multipart form data
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        tracing::error!("Failed to read multipart field: {}", e);
+        api_error(StatusCode::BAD_REQUEST, "Failed to read multipart field")
+    })? {
+        let field_name = field.name().unwrap_or("").to_string();
+
+        if field_name.starts_with("file_") {
+            let content_type = field
+                .content_type()
+                .map(|ct| ct.to_string())
+                .unwrap_or_else(|| "application/octet-stream".to_string());
+
+            if !crate::r2_client::is_valid_content_type(&content_type) {
+                tracing::warn!("Invalid content type in batch: {}", content_type);
+                return Err(api_error(
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    "Unsupported content type",
+                ));
+            }
+
+            let data = field.bytes().await.map_err(|e| {
+                tracing::error!("Failed to read file data: {}", e);
+                api_error(StatusCode::BAD_REQUEST, "Failed to read file data")
+            })?;
+
+            // Validate file size
+            let max_size = if content_type.starts_with("video/") {
+                50 * 1024 * 1024
+            } else {
+                10 * 1024 * 1024
+            };
+
+            if data.len() > max_size {
+                tracing::warn!("File too large in batch: {} bytes (max: {} bytes)", data.len(), max_size);
+                return Err(api_error(StatusCode::PAYLOAD_TOO_LARGE, "File too large"));
+            }
+
+            files.push((data.to_vec(), content_type));
+        } else if field_name == "user_id" {
+            let text = field
+                .text()
+                .await
+                .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid user_id"))?;
+            user_id = Some(text);
+        }
+    }
+
+    let user_id = user_id.ok_or_else(|| {
+        tracing::error!("No user_id in batch upload request");
+        api_error(StatusCode::BAD_REQUEST, "No user_id in batch upload request")
+    })?;
+
+    // Validate batch
+    if files.is_empty() {
+        tracing::warn!("No files found in batch upload request");
+        return Err(api_error(StatusCode::BAD_REQUEST, "No files in upload request"));
+    }
+
+    if files.len() > 9 {
+        tracing::warn!("Too many files in batch: {} (max: 9)", files.len());
+        return Err(api_error(StatusCode::BAD_REQUEST, "Too many files in upload"));
+    }
+
+    let total_size: usize = files.iter().map(|(data, _)| data.len()).sum();
+    if total_size > 100 * 1024 * 1024 {
+        tracing::warn!("Batch too large: {} bytes (max: 100 MB)", total_size);
+        return Err(api_error(StatusCode::PAYLOAD_TOO_LARGE, "Batch too large"));
+    }
+
+    tracing::info!("Batch upload: {} files, total size: {} bytes, user: {}",
+        files.len(), total_size, user_id);
+
+    // Upload all files
+    let mut results: Vec<MediaUploadResponse> = Vec::new();
+
+    for (index, (data, content_type)) in files.into_iter().enumerate() {
+        tracing::info!("Uploading file {}/{}", index + 1, results.len() + 1);
+
+        match r2_client.upload_file(data.clone(), &content_type, &user_id).await {
+            Ok((file_key, public_url, checksum)) => {
+                let response = MediaUploadResponse {
+                    file_key,
+                    public_url,
+                    content_type,
+                    size_bytes: data.len() as u64,
+                    checksum,
+                };
+
+                tracing::info!("✅ File {} uploaded: {}", index + 1, response.public_url);
+                results.push(response);
+            }
+            Err(e) => {
+                tracing::error!("❌ Failed to upload file {}: {}", index + 1, e);
+                return Err(api_error(
+                    StatusCode::BAD_GATEWAY,
+                    "Failed to upload batch to R2",
+                ));
+            }
+        }
+    }
+
+    tracing::info!("✅ Batch upload completed: {} files", results.len());
+    Ok(Json(ApiResponse::success(results)))
 }

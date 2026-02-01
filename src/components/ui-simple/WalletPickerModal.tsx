@@ -1,7 +1,7 @@
 import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './Dialog';
 import { Button } from './Button';
-import { Wallet } from 'lucide-react';
+import { Wallet } from './Icons';
 
 interface WalletPickerModalProps {
   open: boolean;

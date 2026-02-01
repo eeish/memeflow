@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MemeFlow Contract Deployment Script."""
+"""Cord Contract Deployment Script."""
 
 import argparse
 import json
@@ -152,14 +152,14 @@ def parse_deployment(data: dict) -> dict:
 
 
 def deploy(network: str) -> None:
-    """Deploy MemeFlow contracts to the specified network."""
+    """Deploy Cord contracts to the specified network."""
     project_root = Path(__file__).resolve().parent.parent
-    contract_dir = project_root / "contracts" / "memeflow"
+    contract_dir = project_root / "contracts" / "cord"
     deployment_file = project_root / "public" / f"deployment-{network}.json"
 
     net_config = NETWORKS.get(network, NETWORKS["local"])
 
-    print(f"Deploying MemeFlow to {network}")
+    print(f"Deploying Cord to {network}")
     print("=" * 50)
 
     # Switch network
@@ -212,7 +212,7 @@ def deploy(network: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Deploy MemeFlow contracts to Sui network")
+    parser = argparse.ArgumentParser(description="Deploy Cord contracts to Sui network")
     parser.add_argument(
         "network",
         nargs="?",

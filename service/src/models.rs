@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+// ============================================================================
+// User Types
+// ============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: Uuid,
@@ -11,7 +15,7 @@ pub struct User {
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
     pub bio: Option<String>,
-    pub token_symbol: String, // Derived from username/address
+    pub token_symbol: String,
     pub followers_count: i64,
     pub following_count: i64,
     pub posts_count: i64,
@@ -30,27 +34,23 @@ pub struct CreateUserRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateUserFromWalletRequest {
-    pub wallet_address: String,
-    pub username: Option<String>, // If not provided, will be generated
+pub struct UserProfile {
+    pub id: Uuid,
+    pub username: String,
     pub display_name: Option<String>,
-    pub bio: Option<String>,
     pub avatar_url: Option<String>,
+    pub token_symbol: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wallet_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub followers_count: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserExistsResponse {
-    pub exists: bool,
-    pub user: Option<UserProfile>,
-    pub is_new_address: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateProfileRequest {
-    pub display_name: Option<String>,
-    pub bio: Option<String>,
-    pub avatar_url: Option<String>,
-}
+// ============================================================================
+// Post Types
+// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Post {
@@ -58,8 +58,13 @@ pub struct Post {
     pub author_id: Uuid,
     pub content: String,
     pub media_urls: Vec<String>,
-    pub content_blob_id: Option<String>,         // Walrus blob ID for protocol content
-    pub content_protocol_version: Option<String>, // Protocol version (e.g., "1.0")
+    pub content_blob_id: Option<String>,
+    pub content_protocol_version: Option<String>,
+    /// SHA256 hash for on-chain attestation
+    /// Hash = SHA256(author[32] || timestamp_ms[8 BE] || content[*])
+    pub content_hash: Option<String>,
+    /// Timestamp used in hash computation (Unix ms)
+    pub hash_timestamp_ms: Option<i64>,
     pub likes_count: i64,
     pub comments_count: i64,
     pub reposts_count: i64,
@@ -75,20 +80,35 @@ pub struct PostWithAuthor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserProfile {
-    pub id: Uuid,
-    pub username: String,
-    pub display_name: Option<String>,
-    pub avatar_url: Option<String>,
-    pub token_symbol: String,
+pub struct CreatePostRequest {
+    pub author_id: String,
+    pub wallet_address: String,
+    pub content: String,
+    pub media_urls: Option<Vec<String>>,
+    pub protocol_content: Option<ProtocolContent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreatePostRequest {
-    pub author_id: String,
-    pub content: String,
-    pub media_urls: Option<Vec<String>>,
-    pub protocol_content: Option<ProtocolContent>, // Walrus protocol content
+pub struct CreatePostResponse {
+    pub post: Post,
+    pub content_hash: String,
+    pub timestamp_ms: i64,
+    pub content_hash_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyPostHashRequest {
+    pub post_id: String,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyPostHashResponse {
+    pub valid: bool,
+    pub post_id: String,
+    pub author: String,
+    pub timestamp_ms: i64,
+    pub content_preview: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,114 +116,9 @@ pub struct LikeRequest {
     pub user_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenMetadata {
-    pub symbol: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub image_url: Option<String>,
-    pub website_url: Option<String>,
-    pub twitter_url: Option<String>,
-    pub discord_url: Option<String>,
-    pub total_supply: Option<String>,
-    pub creator_id: Uuid,
-    pub market_cap_usd: Option<f64>,
-    pub price_usd: Option<f64>,
-    pub volume_24h_usd: Option<f64>,
-    pub holders_count: i64,
-    pub is_verified: bool,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateTokenMetadataRequest {
-    pub description: Option<String>,
-    pub image_url: Option<String>,
-    pub website_url: Option<String>,
-    pub twitter_url: Option<String>,
-    pub discord_url: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Comment {
-    pub id: Uuid,
-    pub post_id: Uuid,
-    pub author_id: Uuid,
-    pub content: String,
-    pub likes_count: i64,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommentWithAuthor {
-    #[serde(flatten)]
-    pub comment: Comment,
-    pub author: UserProfile,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateCommentRequest {
-    pub author_id: Uuid,
-    pub content: String,
-}
-
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FollowRequest {
-    pub follower_id: Uuid,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FollowStatusResponse {
-    pub is_following: bool,
-    pub followers_count: i64,
-    pub following_count: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Notification {
-    pub id: Uuid,
-    pub user_id: Uuid,
-    pub title: String,
-    pub content: String,
-    pub notification_type: NotificationType,
-    pub related_id: Option<Uuid>, // Could be post_id, user_id, etc.
-    pub is_read: bool,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum NotificationType {
-    #[serde(rename = "like")]
-    Like,
-    #[serde(rename = "comment")]
-    Comment,
-    #[serde(rename = "follow")]
-    Follow,
-    #[serde(rename = "mention")]
-    Mention,
-    #[serde(rename = "token_update")]
-    TokenUpdate,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchQuery {
-    pub q: String,
-    pub limit: Option<usize>,
-    pub offset: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Analytics {
-    pub total_users: i64,
-    pub total_posts: i64,
-    pub total_tokens: i64,
-    pub active_users_24h: i64,
-    pub posts_24h: i64,
-    pub top_tokens: Vec<TokenMetadata>,
-    pub top_users: Vec<UserProfile>,
-}
+// ============================================================================
+// API Response
+// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
@@ -220,15 +135,6 @@ impl<T> ApiResponse<T> {
             data: Some(data),
             error: None,
             message: None,
-        }
-    }
-
-    pub fn success_with_message(data: T, message: String) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            error: None,
-            message: Some(message),
         }
     }
 
@@ -261,7 +167,6 @@ pub struct MediaUploadResponse {
 
 use std::collections::HashMap;
 
-/// User Content Protocol - canonical representation of post content
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolContent {
     pub version: String,
@@ -275,10 +180,9 @@ pub struct ProtocolContent {
 }
 
 fn default_protocol_name() -> String {
-    "memeflow-post".to_string()
+    "cord-post".to_string()
 }
 
-/// Content section containing text and extracted entities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentSection {
     pub text: String,
@@ -288,7 +192,6 @@ pub struct ContentSection {
     pub hashtags: Vec<String>,
 }
 
-/// Media reference to a Walrus blob
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaReference {
     pub blob_id: String,

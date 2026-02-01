@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from './ui-simple/Icons';
 
 interface NotificationsProps {
   user: any;

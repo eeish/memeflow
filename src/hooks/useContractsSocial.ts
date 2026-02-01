@@ -1,11 +1,11 @@
 /**
- * React hooks for MemeFlow social contract interactions
+ * React hooks for Cord social contract interactions
  */
 
 import { useState, useEffect } from 'react';
 import { useSuiClient } from '@mysten/dapp-kit';
 import { loadDeployment } from '../lib/contracts-social';
-import type { MemeFlowDeployment } from '../lib/contracts-social';
+import type { CordDeployment } from '../lib/contracts-social';
 import { useNetwork } from '../contexts/NetworkContext';
 
 /**
@@ -13,7 +13,7 @@ import { useNetwork } from '../contexts/NetworkContext';
  */
 export function useDeploymentConfig() {
   const { currentNetwork } = useNetwork();
-  const [deployment, setDeployment] = useState<MemeFlowDeployment | null>(null);
+  const [deployment, setDeployment] = useState<CordDeployment | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

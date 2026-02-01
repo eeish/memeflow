@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from './ui-simple/Avatar';
-import { TrendingUp, TrendingDown, Sparkles, Flame, Star } from 'lucide-react';
+import { TrendingUp, TrendingDown, Sparkles, Flame, Star } from './ui-simple/Icons';
 
 interface TickerItem {
   id: string;

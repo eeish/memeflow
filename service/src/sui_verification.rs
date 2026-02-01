@@ -113,7 +113,7 @@ impl SuiVerification {
             }
             None => {
                 // Mock data when no network URL is available
-                log::warn!("No Sui network URL available, returning mock on-chain data for {}", address);
+                tracing::warn!("No Sui network URL available, returning mock on-chain data for {}", address);
                 Ok(OnChainUserData {
                     has_transactions: false,
                     transaction_count: 0,
@@ -160,7 +160,7 @@ impl SuiVerification {
                 Ok(0)
             }
             Err(e) => {
-                log::warn!("Failed to get balance for {}: {}", address, e);
+                tracing::warn!("Failed to get balance for {}: {}", address, e);
                 Ok(0)
             }
         }
@@ -210,7 +210,7 @@ impl SuiVerification {
                 Ok(0)
             }
             Err(e) => {
-                log::warn!("Failed to get transaction count for {}: {}", address, e);
+                tracing::warn!("Failed to get transaction count for {}: {}", address, e);
                 Ok(0)
             }
         }
@@ -268,7 +268,7 @@ impl SuiVerification {
         let on_chain_data = match self.get_on_chain_data(address).await {
             Ok(data) => Some(data),
             Err(e) => {
-                log::warn!("Failed to get on-chain data for {}: {}", address, e);
+                tracing::warn!("Failed to get on-chain data for {}: {}", address, e);
                 None
             }
         };

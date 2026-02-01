@@ -1,8 +1,8 @@
-# MemeFlow - Social Token Trading Platform
+# Cord - Social Token Trading Platform
 
 A comprehensive social trading platform built on React 19 and TypeScript, designed for meme token communities and social finance.
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/your-username/memeflow)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/your-username/cord)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-blue.svg)](https://reactjs.org/)
 [![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-3.4-38B2AC.svg)](https://tailwindcss.com/)
@@ -42,8 +42,8 @@ A comprehensive social trading platform built on React 19 and TypeScript, design
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/memeflow.git
-cd memeflow
+git clone https://github.com/your-username/cord.git
+cd cord
 
 # Install dependencies
 npm install
@@ -77,7 +77,7 @@ npm run deploy:testnet    # Deploy to Sui testnet
 ## 📁 Project Structure
 
 ```
-memeflow/
+cord/
 ├── src/
 │   ├── components/           # React components
 │   │   ├── ui/              # shadcn/ui component library
@@ -128,7 +128,7 @@ Create a `.env.local` file in the root directory:
 
 ```env
 # Application
-VITE_APP_NAME=MemeFlow
+VITE_APP_NAME=Cord
 VITE_APP_VERSION=1.0.0
 
 # Network Configuration (Future Blockchain Integration)
@@ -138,7 +138,7 @@ VITE_TESTNET_RPC=https://fullnode.testnet.sui.io:443
 VITE_LOCAL_RPC=http://127.0.0.1:9000
 
 # API Configuration (Future)
-VITE_API_BASE_URL=https://api.memeflow.io
+VITE_API_BASE_URL=https://api.cord.io
 ```
 
 ## 🧪 Testing
@@ -234,9 +234,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- Create an [Issue](https://github.com/your-username/memeflow/issues)
-- Join our [Discord](https://discord.gg/memeflow)
-- Follow us on [Twitter](https://twitter.com/memeflow)
+- Create an [Issue](https://github.com/your-username/cord/issues)
+- Join our [Discord](https://discord.gg/cord)
+- Follow us on [Twitter](https://twitter.com/cord)
 
 ---
 

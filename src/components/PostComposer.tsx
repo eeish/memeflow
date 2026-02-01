@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Send, Image as ImageIcon, Video, X } from 'lucide-react';
+import { Send, Image as ImageIcon, Video, X } from './ui-simple/Icons';
 import { Button } from './ui-simple/Button';
 import { Textarea } from './ui-simple/Textarea';
 import { apiService } from '../lib/api';
@@ -7,7 +7,8 @@ import { useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-ki
 import { Transaction } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
 import { useContractAddresses } from '../hooks/useContractsSocial';
-import { encodePostContent } from '../lib/postEncoding';
+import { useAuth } from './AuthProvider';
+import { computeContentHash, hashToBytes } from '../lib/postHash';
 
 interface MediaItem {
   id: string;
@@ -24,14 +25,32 @@ export function PostComposer({ onPost }: PostComposerProps) {
   const [content, setContent] = useState('');
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSigning, setIsSigning] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const account = useCurrentAccount();
-  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+  const { user } = useAuth();
+  const { mutateAsync: signAndExecuteAsync } = useSignAndExecuteTransaction();
   const { packageId } = useContractAddresses();
 
-  const publishOnChain = async (payload: string) => {
+  /**
+   * Sign and execute on-chain attestation.
+   *
+   * IMPORTANT: This must be called BEFORE uploading content or creating the post
+   * in the database. If the user rejects the signature, no content should be sent.
+   *
+   * Hash = SHA256(author[32] || timestamp_ms[8 BE] || content[*])
+   *
+   * @param contentHash - Pre-computed content hash (hex string)
+   * @param timestampMs - Timestamp used in hash computation
+   * @param postId - Placeholder post ID (will be replaced with actual ID after DB creation)
+   */
+  const signAndPublishOnChain = async (
+    contentHash: string,
+    timestampMs: number,
+    postId: string
+  ): Promise<void> => {
     if (!account?.address) {
       throw new Error('Please connect your wallet to publish');
     }
@@ -41,33 +60,42 @@ export function PostComposer({ onPost }: PostComposerProps) {
     }
 
     const tx = new Transaction();
-    const payloadBytes = bcs
+
+    // Convert hash to bytes for Move contract
+    const contentHashBytes = bcs
       .vector(bcs.u8())
-      .serialize(Array.from(new TextEncoder().encode(payload)));
+      .serialize(hashToBytes(contentHash));
+
+    // Convert post ID to bytes
+    const postIdBytes = bcs
+      .vector(bcs.u8())
+      .serialize(Array.from(new TextEncoder().encode(postId)));
 
     tx.moveCall({
-      target: `${packageId}::memeflow_social::emit_post`,
-      arguments: [tx.pure(payloadBytes)],
+      target: `${packageId}::cord_social::emit_post`,
+      arguments: [
+        tx.pure(contentHashBytes),    // content_hash: vector<u8>
+        tx.pure.u64(timestampMs),     // timestamp_ms: u64
+        tx.pure(postIdBytes),         // post_id: vector<u8>
+      ],
     });
 
-    await new Promise<void>((resolve, reject) => {
-      signAndExecute(
-        {
-          transaction: tx,
-          options: {
-            showEffects: true,
-            showEvents: true,
-          },
-        },
-        {
-          onSuccess: () => resolve(),
-          onError: (error) => reject(error),
-        }
-      );
+    // Use mutateAsync for proper Promise handling - no retry on rejection
+    await signAndExecuteAsync({
+      transaction: tx,
+      options: {
+        showEffects: true,
+        showEvents: true,
+      },
     });
   };
 
   const handleSubmit = async () => {
+    // Prevent double submission
+    if (isSigning || isUploading) {
+      return;
+    }
+
     if (!content.trim() && media.length === 0) {
       return;
     }
@@ -79,65 +107,115 @@ export function PostComposer({ onPost }: PostComposerProps) {
       return;
     }
 
-    let attachment: { type: 'image' | 'video'; url: string } | undefined;
-    setIsUploading(true);
+    if (!user?.id) {
+      setUploadError('Please sign in to publish');
+      return;
+    }
 
-    // If media is attached, upload to R2 first
-    if (media.length > 0) {
-      console.log('🚀 PostComposer upload start:', {
-        userId: account.address,
-        fileCount: media.length,
-        files: media.map(m => ({name: m.file.name, type: m.file.type, size: m.file.size}))
-      });
-      console.log('📤 Uploading', media.length, 'files to R2...');
+    setIsSigning(true);
 
-      try {
-        // Upload files to R2
+    // =========================================================================
+    // ATOMIC PUBLISH FLOW
+    //
+    // The signature step MUST happen FIRST before any content is uploaded.
+    // If the user rejects the signature, NO content should be sent anywhere.
+    //
+    // Flow:
+    // 1. Compute hash client-side
+    // 2. Sign and publish on-chain (user can reject here - nothing sent yet)
+    // 3. Only after signing succeeds: upload media to R2
+    // 4. Only after upload succeeds: create post in database
+    // =========================================================================
+
+    const trimmedContent = content.trim();
+    const timestampMs = Date.now();
+    const tempPostId = `pending-${timestampMs}`; // Placeholder ID for on-chain event
+
+    try {
+      // Step 1: Compute content hash client-side
+      console.log('🔐 Computing content hash...');
+      const contentHash = await computeContentHash(
+        account.address,
+        timestampMs,
+        trimmedContent
+      );
+      console.log('✅ Hash computed:', contentHash);
+
+      // Step 2: Sign and publish on-chain FIRST
+      // If user rejects signature, this throws and we stop immediately
+      // NO content has been uploaded at this point
+      console.log('⛓️ Requesting signature for on-chain attestation...');
+      await signAndPublishOnChain(contentHash, timestampMs, tempPostId);
+      console.log('✅ On-chain attestation signed and published');
+
+      // Signing complete, now switch to upload phase
+      setIsSigning(false);
+      setIsUploading(true);
+
+      // Step 3: Only after signing succeeds, upload media (if any)
+      let mediaUrls: string[] = [];
+      let attachment: { type: 'image' | 'video'; url: string } | undefined;
+
+      if (media.length > 0) {
+        console.log('📤 Uploading', media.length, 'files to R2...');
         const uploadResult = await apiService.batchUploadMedia(
           media.map(m => m.file),
           account.address
         );
-        console.log('📥 Upload response:', uploadResult);
 
         if (!uploadResult.success || !uploadResult.data || uploadResult.data.length === 0) {
           throw new Error(uploadResult.error || 'Upload failed');
         }
 
         console.log('✅ Upload successful:', uploadResult.data);
-
-        const firstFile = uploadResult.data[0];
-        const firstMedia = media[0];
+        mediaUrls = uploadResult.data.map(f => f.public_url);
         attachment = {
-          type: firstMedia.type,
-          url: firstFile.public_url,
+          type: media[0].type,
+          url: uploadResult.data[0].public_url,
         };
-      } catch (error: any) {
-        console.error('❌ Upload failed:', error);
-        setUploadError(error.message || 'Failed to upload media');
-        setIsUploading(false);
-        return;
       }
-    }
 
-    try {
-      const payload = encodePostContent(content, attachment?.url);
-      await publishOnChain(payload);
-      onPost(content, attachment);
+      // Step 4: Only after upload succeeds, create post in database
+      console.log('📝 Creating post in database...');
+      const createResult = await apiService.createPost({
+        author_id: user.id,
+        wallet_address: account.address,
+        content: trimmedContent,
+        media_urls: mediaUrls.length > 0 ? mediaUrls : undefined,
+      });
+
+      if (!createResult.success || !createResult.data) {
+        throw new Error(createResult.error || 'Failed to create post');
+      }
+
+      console.log('✅ Post created:', {
+        postId: createResult.data.post.id,
+        contentHash: createResult.data.content_hash,
+      });
+
+      // Success - notify parent and clear form
+      onPost(trimmedContent, attachment);
+      setContent('');
+      media.forEach(item => URL.revokeObjectURL(item.preview));
+      setMedia([]);
+      if (imageInputRef.current) imageInputRef.current.value = '';
+      if (videoInputRef.current) videoInputRef.current.value = '';
+
     } catch (error: any) {
+      // Any failure at any step stops the flow
       console.error('❌ Post publish failed:', error);
-      setUploadError(error?.message || 'Failed to publish post');
-      setIsUploading(false);
-      return;
-    }
+      const errorMessage = error?.message || 'Failed to publish post';
 
-    // Clear form
-    setContent('');
-    // Revoke object URLs to prevent memory leaks
-    media.forEach(item => URL.revokeObjectURL(item.preview));
-    setMedia([]);
-    setIsUploading(false);
-    if (imageInputRef.current) imageInputRef.current.value = '';
-    if (videoInputRef.current) videoInputRef.current.value = '';
+      // Provide clearer error messages for common cases
+      if (errorMessage.includes('rejected') || errorMessage.includes('denied') || errorMessage.includes('cancelled')) {
+        setUploadError('Transaction cancelled. No content was sent.');
+      } else {
+        setUploadError(errorMessage);
+      }
+    } finally {
+      setIsSigning(false);
+      setIsUploading(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -211,7 +289,7 @@ export function PostComposer({ onPost }: PostComposerProps) {
     setMedia(media.filter(m => m.id !== id));
   };
 
-  const canPost = (content.trim() || media.length > 0) && !isUploading;
+  const canPost = (content.trim() || media.length > 0) && !isUploading && !isSigning;
 
   return (
     <div className="bg-white border-b border-gray-200 p-4">
@@ -336,7 +414,12 @@ export function PostComposer({ onPost }: PostComposerProps) {
             size="sm"
             className="bg-gray-900 hover:bg-gray-800"
           >
-            {isUploading ? (
+            {isSigning ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1.5"></div>
+                Signing...
+              </>
+            ) : isUploading ? (
               <>
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1.5"></div>
                 Uploading...

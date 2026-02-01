@@ -2,14 +2,14 @@ version: '3.8'
 
 services:
   # Rust Backend Service
-  memeflow-service:
+  cord-service:
     build:
       context: ./service
       dockerfile: Dockerfile
     ports:
       - "3001:3001"
     environment:
-      - DATABASE_URL=sqlite:./data/memeflow.db
+      - DATABASE_URL=sqlite:./data/cord.db
       - HOST=0.0.0.0
       - PORT=3001
       - RUST_LOG=info
@@ -26,7 +26,7 @@ services:
 
   # Frontend Development (optional - can run separately)
   # Uncomment if you want frontend in Docker too
-  # memeflow-frontend:
+  # cord-frontend:
   #   build:
   #     context: .
   #     dockerfile: Dockerfile.frontend
@@ -38,7 +38,7 @@ services:
   #   environment:
   #     - VITE_API_BASE_URL=http://localhost:3001
   #   depends_on:
-  #     - memeflow-service
+  #     - cord-service
   #   command: npm run dev -- --host 0.0.0.0
 
 volumes:
@@ -47,4 +47,4 @@ volumes:
 
 networks:
   default:
-    name: memeflow-network
+    name: cord-network

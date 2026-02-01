@@ -5,6 +5,7 @@ import { Alert, AlertDescription } from './ui-simple/Alert';
 
 interface ProfileSetupFlowProps {
   walletAddress: string;
+  skipOnChain?: boolean;
   onComplete: (userData: {
     username: string;
   }) => void;
@@ -13,6 +14,7 @@ interface ProfileSetupFlowProps {
 
 export const ProfileSetupFlow: React.FC<ProfileSetupFlowProps> = ({
   walletAddress,
+  skipOnChain = false,
   onComplete,
   onCancel
 }) => {
@@ -27,12 +29,16 @@ export const ProfileSetupFlow: React.FC<ProfileSetupFlowProps> = ({
       setIsCreatingProfile(true);
       setProfileError(null);
 
-      console.log('🚀 Creating on-chain profile...');
+      if (!skipOnChain) {
+        console.log('🚀 Creating on-chain profile...');
 
-      // Create on-chain profile with username (token name) only
-      await createProfile(userData.username);
+        // Create on-chain profile with username (token name) only
+        await createProfile(userData.username);
 
-      console.log('✅ On-chain profile created successfully');
+        console.log('✅ On-chain profile created successfully');
+      } else {
+        console.log('⏭️ Skipping on-chain profile creation for zkLogin user');
+      }
 
       // Profile created successfully, proceed with backend creation
       onComplete(userData);
@@ -40,6 +46,7 @@ export const ProfileSetupFlow: React.FC<ProfileSetupFlowProps> = ({
     } catch (error: any) {
       console.error('❌ Failed to create on-chain profile:', error);
       setProfileError(error.message || 'Failed to create on-chain profile. Please try again.');
+    } finally {
       setIsCreatingProfile(false);
     }
   };

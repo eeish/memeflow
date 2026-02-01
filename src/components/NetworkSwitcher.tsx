@@ -19,7 +19,7 @@ import {
   AlertTriangle,
   Home,
   Settings
-} from 'lucide-react';
+} from './ui-simple/Icons';
 import { useNetwork, useNetworkSwitcher } from '../contexts/NetworkContext';
 import type { SuiNetworkName } from '../lib/networks';
 import { getAllNetworks, networkHasFaucet } from '../lib/networks';

@@ -7,13 +7,16 @@ import {
 } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { SUI_CLOCK_OBJECT_ID } from '@mysten/sui/utils';
-import { bcs } from '@mysten/sui/bcs';
 import { useContractAddresses } from './useContractsSocial';
 
-// Constants from the contract
-const PRICE_DENOM = 16000;
+// Constants from the contract (share_market.move)
+// Bonding curve: p(x) = 0.02 + 0.35/(x+3) + 1/(38-x) SUI
 const MIST_PER_SUI = 1_000_000_000;
-const NEW_USER_FREE_FOLLOWS = 7;
+const PRICE_BASE = 20_000_000n;         // 0.02 SUI in MIST
+const PRICE_TERM1_NUM = 350_000_000n;   // 0.35 SUI numerator
+const PRICE_TERM2_NUM = 1_000_000_000n; // 1.0 SUI numerator
+const TERM1_OFFSET = 3n;                // x + 3
+const TERM2_DENOM_BASE = 38n;           // 38 - x
 
 export interface FollowProfile {
   id: string;
@@ -39,11 +42,15 @@ export interface FollowStats {
   sponsorLeft: number;
 }
 
-// Calculate price for a given supply using quadratic bonding curve
-export function calculatePriceMist(supply: number): bigint {
-  const num = BigInt(supply) * BigInt(supply) * BigInt(MIST_PER_SUI);
-  const denom = BigInt(PRICE_DENOM);
-  return num / denom;
+// Calculate price in MIST for x-th holder/share using bonding curve from contract
+// p(x) = 0.02 + 0.35/(x+3) + 1/(38-x) SUI
+export function calculatePriceMist(x: number): bigint {
+  if (x < 1) x = 1;
+  if (x > 30) x = 30;
+  const xBig = BigInt(x);
+  const term1 = PRICE_TERM1_NUM / (xBig + TERM1_OFFSET);
+  const term2 = PRICE_TERM2_NUM / (TERM2_DENOM_BASE - xBig);
+  return PRICE_BASE + term1 + term2;
 }
 
 // Format MIST to SUI for display
@@ -55,11 +62,12 @@ export function formatMistToSui(mist: bigint): string {
   return sui.toFixed(2);
 }
 
+
 export function useSocialFollow() {
   const account = useCurrentAccount();
   const client = useSuiClient();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction();
-  const { packageId, profileRegistryId, factoryId } = useContractAddresses();
+  const { packageId } = useContractAddresses();
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,52 +85,30 @@ export function useSocialFollow() {
     }
   }, [userProfile?.followerCount]);
   
-  // Use package ID and registry ID from contract addresses hook
+  // Use package ID from contract addresses hook
   const PACKAGE_ID = packageId;
-  const PROFILE_REGISTRY_ID = profileRegistryId;
-  const FACTORY_ID = factoryId;
 
   // Create profile (FollowBook + Market)
   // Only requires username (token name) - cannot be changed later
-  const createProfile = useCallback(async (
-    username: string
-  ) => {
+  const createProfile = useCallback(async (username: string) => {
     if (!account) {
       setError('Wallet not connected');
-      return;
+      throw new Error('Wallet not connected');
     }
 
     if (!PACKAGE_ID || PACKAGE_ID === '0x0' || PACKAGE_ID === '0x0000000000000000000000000000000000000000000000000000000000000000') {
-      setError(`Contracts not deployed. Please ensure contracts are deployed on the network.`);
-      return;
+      const errorMessage = 'Contracts not deployed. Please ensure contracts are deployed on the network.';
+      setError(errorMessage);
+      throw new Error(errorMessage);
     }
-
-    // Limit username size to prevent exceeding Sui's limits
-    const MAX_USERNAME_SIZE = 100; // Reasonable limit for username
-    const safeUsername = username.length > MAX_USERNAME_SIZE ? username.substring(0, MAX_USERNAME_SIZE) : username;
 
     // Log for debugging
     console.log('Creating profile with:', {
       packageId: PACKAGE_ID,
-      profileRegistryId: PROFILE_REGISTRY_ID,
-      usernameLength: safeUsername.length,
+      usernameLength: username.length,
       walletAddress: account.address,
       rpcUrl: client.url
     });
-
-    // Verify the registry object exists before attempting transaction
-    try {
-      const registryObj = await client.getObject({
-        id: PROFILE_REGISTRY_ID,
-        options: { showContent: false }
-      });
-      console.log('Registry object verified:', registryObj);
-    } catch (verifyError) {
-      console.error('Failed to verify registry object:', verifyError);
-      setError(`Registry object not found. Please ensure you're connected to the correct network.`);
-      setLoading(false);
-      return;
-    }
 
     setLoading(true);
     setError(null);
@@ -130,44 +116,47 @@ export function useSocialFollow() {
     try {
       const tx = new Transaction();
 
-      // Call create_memeflow_profile with only username
-      const usernameBytes = bcs.vector(bcs.u8()).serialize(Array.from(new TextEncoder().encode(safeUsername)));
+      const firstSharePrice = calculatePriceMist(1);
+      const paymentAmount = firstSharePrice + 1_000n;
+      const [paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(paymentAmount.toString())]);
 
       tx.moveCall({
-        target: `${PACKAGE_ID}::memeflow_social::create_memeflow_profile`,
+        target: `${PACKAGE_ID}::share_market::create_market`,
         arguments: [
-          tx.pure(usernameBytes),
-          tx.object(PROFILE_REGISTRY_ID),
+          paymentCoin,
         ],
       });
 
-      await signAndExecute(
-        {
-          transaction: tx,
-          options: {
-            showEffects: true,
-            showEvents: true,
+      const result = await new Promise<any>((resolve, reject) => {
+        signAndExecute(
+          {
+            transaction: tx,
+            options: {
+              showEffects: true,
+              showEvents: true,
+            },
           },
-        },
-        {
-          onSuccess: (result) => {
-            console.log('Profile created successfully:', result);
-            // Refresh profile data
-            fetchUserProfile();
-          },
-          onError: (error) => {
-            console.error('Failed to create profile:', error);
-            setError(error.message);
-          },
-        }
-      );
+          {
+            onSuccess: resolve,
+            onError: reject,
+          }
+        );
+      });
+
+      if (result?.effects?.status?.status && result.effects.status.status !== 'success') {
+        throw new Error(`Transaction failed: ${result.effects.status.status}`);
+      }
+
+      console.log('Profile created successfully:', result);
+      fetchUserProfile();
     } catch (err: any) {
       console.error('Error creating profile:', err);
       setError(err.message || 'Failed to create profile');
+      throw err;
     } finally {
       setLoading(false);
     }
-  }, [account, signAndExecute, PACKAGE_ID, PROFILE_REGISTRY_ID]);
+  }, [account, signAndExecute, PACKAGE_ID]);
 
   // Follow a user (buy key)
   const followUser = useCallback(async (

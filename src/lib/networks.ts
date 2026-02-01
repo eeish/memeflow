@@ -95,7 +95,7 @@ export const getAddressUrl = (network: SuiNetworkName, address: string): string 
 };
 
 // Storage keys for network preference
-export const NETWORK_STORAGE_KEY = 'memeflow-sui-network';
+export const NETWORK_STORAGE_KEY = 'cord-sui-network';
 
 // Save network preference to localStorage
 export const saveNetworkPreference = (network: SuiNetworkName): void => {

@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Card } from './ui-simple/Card';
 import { Button } from './ui-simple/Button';
-import { Avatar } from './ui-simple/Avatar';
-import { Textarea } from './ui-simple/Textarea';
 import { Alert, AlertDescription } from './ui-simple/Alert';
-import { Heart, MessageCircle, Repeat2, Share, TrendingUp, Send, AlertCircle, Sparkles, UserPlus } from 'lucide-react';
+import { TrendingUp, AlertCircle, Sparkles, UserPlus } from './ui-simple/Icons';
 import { apiService, type PostWithAuthor, type FollowStatusResponse } from '../lib/api';
-import { MediaGallery } from './MediaGallery';
 import { PostComposer } from './PostComposer';
+import { FeedPostCard } from './feed/FeedPostCard';
+import type { FeedPostItem } from './feed/types';
+import { inferMediaType } from '../lib/feed';
 
 interface SocialFeedProps {
   user: any;
@@ -15,8 +15,6 @@ interface SocialFeedProps {
 
 export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
   const [posts, setPosts] = useState<PostWithAuthor[]>([]);
-  const [newPost, setNewPost] = useState('');
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [followStatuses, setFollowStatuses] = useState<{[key: string]: FollowStatusResponse}>({});
   const [userLikes, setUserLikes] = useState<{[key: string]: boolean}>({});
@@ -71,7 +69,6 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
   const handleCreatePost = async (content: string, attachment?: { type: 'image' | 'video'; url: string; blobId?: string }) => {
     if (!user?.id) return;
 
-    setLoading(true);
     try {
       // Store the Walrus aggregator URL in media_urls
       const media_urls = attachment ? [attachment.url] : [];
@@ -91,8 +88,6 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
     } catch (error) {
       console.error('Failed to create post:', error);
       setError('Failed to create post');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -199,134 +194,72 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
           const followStatus = followStatuses[post.author_id];
           const isLiked = userLikes[post.id] ?? false;
           
+          const feedPost: FeedPostItem = {
+            id: post.id,
+            author: {
+              id: post.author_id,
+              username: post.author.username,
+              displayName: post.author.display_name,
+              avatarUrl: post.author.avatar_url,
+              bio: post.author.bio,
+              tokenSymbol: post.author.token_symbol,
+              walletAddress: post.author.wallet_address,
+              followersCount: followStatus?.followers_count ?? post.author.followers_count,
+              holdersCount: post.author.followers_count, // Use followers_count as holders for now
+              followingCount: followStatus?.following_count,
+            },
+            content: post.content,
+            timestamp: formatTimeAgo(post.created_at),
+            media: post.media_urls?.map((url) => ({ type: inferMediaType(url), url })),
+            likesCount: post.likes_count,
+            commentsCount: post.comments_count,
+          };
+
+          const tokenMention = post.content.match(/\$([A-Z]+)/);
+
           return (
-            <Card key={post.id} className="glass border border-white/10 p-6 hover:border-white/20 transition-all duration-300">
-              <div className="flex space-x-4">
-                <Avatar className="w-12 h-12 bg-gradient-to-r from-cyan-400 to-purple-400 flex items-center justify-center">
-                  <span className="text-white font-bold">
-                    {post.author.username[0].toUpperCase()}
-                  </span>
-                </Avatar>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-semibold text-white">@{post.author.username}</span>
-                      {post.author.display_name && (
-                        <span className="text-white/70">({post.author.display_name})</span>
-                      )}
-                      <span className="text-white/50 text-sm">·</span>
-                      <span className="text-white/50 text-sm">{formatTimeAgo(post.created_at)}</span>
+            <FeedPostCard
+              key={post.id}
+              post={feedPost}
+              tone="dark"
+              headerAction={
+                !isOwnPost && user?.id ? (
+                  <Button
+                    variant={followStatus?.is_following ? 'outline' : 'default'}
+                    size="sm"
+                    onClick={() => handleFollow(post.author_id)}
+                    className={`text-xs px-3 py-1 ${
+                      followStatus?.is_following
+                        ? 'bg-white/10 text-white hover:bg-red-500/20 hover:text-red-300 border-white/20'
+                        : 'bg-gradient-to-r from-cyan-500 to-pink-500 hover:from-cyan-600 hover:to-pink-600 text-white'
+                    }`}
+                  >
+                    <UserPlus className="w-3 h-3 mr-1" />
+                    {followStatus?.is_following ? 'Unfollow' : 'Follow'}
+                  </Button>
+                ) : null
+              }
+              onLike={() => handleLike(post.id)}
+              isLiked={isLiked}
+              bodyExtra={
+                tokenMention ? (
+                  <Card className="glass border border-white/10 p-3 mb-4 bg-gradient-to-r from-cyan-500/10 to-pink-500/10">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <TrendingUp className="w-5 h-5 text-cyan-400" />
+                        <span className="font-semibold text-white">${tokenMention[1]}</span>
+                      </div>
+                      <div className="flex items-center space-x-4">
+                        <span className="text-white/70">Token mentioned</span>
+                        <span className="text-cyan-400 text-sm px-2 py-1 rounded bg-cyan-500/20">
+                          🚀 Trending
+                        </span>
+                      </div>
                     </div>
-                    
-                    {/* Follow button - only show if not own post and user is logged in */}
-                    {!isOwnPost && user?.id && (
-                      <Button
-                        variant={followStatus?.is_following ? "outline" : "default"}
-                        size="sm"
-                        onClick={() => handleFollow(post.author_id)}
-                        className={`text-xs px-3 py-1 ${
-                          followStatus?.is_following
-                            ? 'bg-white/10 text-white hover:bg-red-500/20 hover:text-red-300 border-white/20'
-                            : 'bg-gradient-to-r from-cyan-500 to-pink-500 hover:from-cyan-600 hover:to-pink-600 text-white'
-                        }`}
-                      >
-                        <UserPlus className="w-3 h-3 mr-1" />
-                        {followStatus?.is_following ? 'Unfollow' : 'Follow'}
-                      </Button>
-                    )}
-                  </div>
-                  
-                  <p className="text-white/90 mb-4 leading-relaxed whitespace-pre-wrap">{post.content}</p>
-
-                  {/* Media Attachment */}
-                  {post.media_urls && post.media_urls.length > 0 && (
-                    <div className="mb-3">
-                      <img
-                        src={post.media_urls[0]}
-                        alt="Post attachment"
-                        className="w-full rounded border border-white/10 max-h-96 object-cover"
-                        onError={(e) => {
-                          // If image fails to load, try as video
-                          const target = e.target as HTMLImageElement;
-                          const parent = target.parentElement;
-                          if (parent) {
-                            const video = document.createElement('video');
-                            video.src = post.media_urls[0];
-                            video.controls = true;
-                            video.className = 'w-full rounded border border-white/10 max-h-96';
-                            parent.replaceChild(video, target);
-                          }
-                        }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Token mention detection - simple regex */}
-                  {(() => {
-                    const tokenMention = post.content.match(/\$([A-Z]+)/);
-                    if (tokenMention) {
-                      return (
-                        <Card className="glass border border-white/10 p-3 mb-4 bg-gradient-to-r from-cyan-500/10 to-pink-500/10">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2">
-                              <TrendingUp className="w-5 h-5 text-cyan-400" />
-                              <span className="font-semibold text-white">${tokenMention[1]}</span>
-                            </div>
-                            <div className="flex items-center space-x-4">
-                              <span className="text-white/70">Token mentioned</span>
-                              <span className="text-cyan-400 text-sm px-2 py-1 rounded bg-cyan-500/20">
-                                🚀 Trending
-                              </span>
-                            </div>
-                          </div>
-                        </Card>
-                      );
-                    }
-                    return null;
-                  })()}
-                  
-                  <div className="flex items-center justify-between text-white/60">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleLike(post.id)}
-                      className={`hover:bg-pink-500/20 hover:text-pink-400 ${
-                        isLiked ? 'text-pink-400' : ''
-                      }`}
-                    >
-                      <Heart className={`w-4 h-4 mr-1 ${isLiked ? 'fill-current' : ''}`} />
-                      {post.likes_count}
-                    </Button>
-                    
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="hover:bg-cyan-500/20 hover:text-cyan-400"
-                    >
-                      <MessageCircle className="w-4 h-4 mr-1" />
-                      {post.comments_count}
-                    </Button>
-                    
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="hover:bg-green-500/20 hover:text-green-400"
-                    >
-                      <Repeat2 className="w-4 h-4 mr-1" />
-                      {post.reposts_count}
-                    </Button>
-                    
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="hover:bg-purple-500/20 hover:text-purple-400"
-                    >
-                      <Share className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </Card>
+                  </Card>
+                ) : null
+              }
+            />
           );
         })}
       </div>

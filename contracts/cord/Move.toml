@@ -1,0 +1,19 @@
+[package]
+name = "cord"
+edition = "2024.beta"
+license = "MIT"
+authors = ["Cord Team"]
+published-at = "0x0"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/devnet" }
+
+[addresses]
+cord = "0x0"
+
+[dev-dependencies]
+
+[dev-addresses]
+
+[environments]
+devnet = "a9149565"

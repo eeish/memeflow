@@ -1,8 +1,8 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { 
-  useCurrentWallet, 
-  useConnectWallet, 
-  useDisconnectWallet, 
+import {
+  useCurrentWallet,
+  useConnectWallet,
+  useDisconnectWallet,
   useWallets,
   useSignPersonalMessage
 } from '@mysten/dapp-kit';
@@ -10,9 +10,10 @@ import { Button } from './ui-simple/Button';
 import { Card } from './ui-simple/Card';
 import { Alert, AlertDescription } from './ui-simple/Alert';
 import { WalletPickerModal } from './ui-simple/WalletPickerModal';
-import { Check, Wallet, Sparkles, Zap } from 'lucide-react';
+import { Check, Wallet, Sparkles, Zap } from './ui-simple/Icons';
 import { ProfileSetupFlow } from './ProfileSetupFlow';
 import { useNetwork } from '../contexts/NetworkContext';
+import { useZkLogin } from '../hooks/useZkLogin';
 
 const AuthContext = createContext<any>(null);
 
@@ -32,6 +33,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
   const [success, setSuccess] = useState('');
   const [showMemeLaunch, setShowMemeLaunch] = useState(false);
   const [pendingWalletAddress, setPendingWalletAddress] = useState<string>('');
+  const [pendingAuthMethod, setPendingAuthMethod] = useState<'wallet' | 'zklogin'>('wallet');
   const [authenticatedWallet, setAuthenticatedWallet] = useState<string>(() => {
     // Initialize from localStorage to persist across refreshes
     return localStorage.getItem('authenticated_wallet') || '';
@@ -39,6 +41,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
   const [authChallenge, setAuthChallenge] = useState<string | null>(null);
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [userInitiatedConnection, setUserInitiatedConnection] = useState(false);
+  const [zkAuthenticating, setZkAuthenticating] = useState(false);
 
   // Wallet hooks
   const { currentWallet, connectionStatus, isConnecting } = useCurrentWallet();
@@ -49,6 +52,16 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
   // Network context
   const { networkConfig } = useNetwork();
+
+  const {
+    loading: zkLoading,
+    error: zkError,
+    address: zkAddress,
+    isAuthenticated: zkAuthenticated,
+    startGoogleLogin,
+    signOut: zkLoginSignOut,
+    isConfigured: zkLoginConfigured,
+  } = useZkLogin();
 
   useEffect(() => {
     console.log('🏁 [AUTH_PROVIDER] Component mounted, starting initial auth check');
@@ -63,6 +76,37 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
   useEffect(() => {
     onAuthChange?.(user);
   }, [user, onAuthChange]);
+
+  useEffect(() => {
+    if (!zkAuthenticated || !zkAddress || user || loading || zkAuthenticating) {
+      return;
+    }
+
+    const runZkLoginAuthentication = async () => {
+      setZkAuthenticating(true);
+      setError('');
+
+      try {
+        const userExists = await checkUserExists(zkAddress);
+
+        if (userExists) {
+          await authenticateExistingUser(zkAddress, 'zklogin');
+        } else {
+          setPendingWalletAddress(zkAddress);
+          setPendingAuthMethod('zklogin');
+          setShowMemeLaunch(true);
+          setSuccess('Google account authenticated! Let\'s create your profile.');
+        }
+      } catch (error: any) {
+        console.error('❌ [ZKLOGIN_AUTH] Failed to authenticate:', error);
+        setError(error.message || 'Failed to complete Google sign-in');
+      } finally {
+        setZkAuthenticating(false);
+      }
+    };
+
+    runZkLoginAuthentication();
+  }, [zkAuthenticated, zkAddress, user, loading, zkAuthenticating]);
 
   // Periodic authentication verification - check every 5 seconds
   useEffect(() => {
@@ -249,6 +293,11 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     localStorage.removeItem('wallet_auth_completed');
     localStorage.removeItem('wallet_processing');
     localStorage.removeItem('authenticated_wallet');
+    localStorage.removeItem('auth_method');
+
+    if (user?.authMethod === 'zklogin') {
+      zkLoginSignOut();
+    }
     
     // Disconnect wallet if still connected
     if (currentWallet) {
@@ -338,6 +387,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       // Store successful authentication persistently
       localStorage.setItem('wallet_auth_completed', Date.now().toString());
       localStorage.setItem('authenticated_wallet', walletAddress);
+      localStorage.setItem('auth_method', 'wallet');
       setAuthenticatedWallet(walletAddress);
       
     } catch (error) {
@@ -346,7 +396,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     }
   };
 
-  const authenticateExistingUser = async (walletAddress: string): Promise<boolean> => {
+  const authenticateExistingUser = async (walletAddress: string, authMethod: 'wallet' | 'zklogin' = 'wallet'): Promise<boolean> => {
     try {
       const response = await fetch(`http://localhost:3001/api/users/by-address/${walletAddress}`);
       const data = await response.json();
@@ -355,7 +405,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         console.log('✅ [AUTH_USER] User profile fetched successfully');
         const existingUser = {
           ...data.data,
-          authMethod: 'wallet' as const,
+          authMethod: authMethod as 'wallet' | 'zklogin',
           hasBlockchainToken: !!localStorage.getItem('blockchain_tx'),
           // Ensure consistent wallet_address property
           wallet_address: walletAddress
@@ -367,6 +417,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         localStorage.setItem('wallet_address', walletAddress);
         localStorage.setItem('username', existingUser.username);
         localStorage.setItem('token_symbol', existingUser.token_symbol);
+        localStorage.setItem('auth_method', authMethod);
         return true;
       } else {
         console.log('⚠️ [AUTH_USER] User not found in database');
@@ -459,21 +510,23 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       const blockchainTx = localStorage.getItem('blockchain_tx');
       const authCompleted = localStorage.getItem('wallet_auth_completed');
       const authenticatedWalletStored = localStorage.getItem('authenticated_wallet');
+      const authMethod = localStorage.getItem('auth_method') === 'zklogin' ? 'zklogin' : 'wallet';
       
       // Restore session if we have valid wallet authentication data
       if (walletAddress && username) {
         console.log('🔗 [CHECK_AUTH] Found authenticated wallet session:', { walletAddress, username });
         
         // Try to get user from backend to restore full profile
+        // Backend is required for proper user ID (UUID) - no fallback to wallet address
         try {
           const response = await fetch(`http://localhost:3001/api/users/by-address/${walletAddress}`);
           const data = await response.json();
-          
+
           if (data.success && data.data) {
             console.log('✅ Successfully restored user from backend:', data.data);
             const restoredUser = {
               ...data.data,
-              authMethod: 'wallet' as const,
+              authMethod: authMethod as 'wallet' | 'zklogin',
               hasBlockchainToken: !!blockchainTx,
               blockchainTx: blockchainTx || null,
               wallet_address: walletAddress // Ensure wallet_address is set
@@ -482,35 +535,28 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
             setAuthenticatedWallet(walletAddress);
             setSuccess(`Welcome back, @${restoredUser.username}!`);
             return;
+          } else {
+            // User not found in backend - clear stale localStorage and require re-auth
+            console.warn('⚠️ User not found in backend, clearing stale session');
+            localStorage.removeItem('wallet_address');
+            localStorage.removeItem('username');
+            localStorage.removeItem('token_symbol');
+            localStorage.removeItem('authenticated_wallet');
+            localStorage.removeItem('auth_method');
           }
         } catch (error) {
-          console.warn('Backend restore failed, using localStorage data:', error);
+          console.warn('⚠️ Backend unavailable, cannot restore session:', error);
+          // Don't use fallback - backend is required for proper user ID
+          // Clear potentially stale data
+          localStorage.removeItem('wallet_address');
+          localStorage.removeItem('username');
+          localStorage.removeItem('token_symbol');
+          localStorage.removeItem('authenticated_wallet');
+          localStorage.removeItem('auth_method');
         }
-        
-        // Fallback: create user object from localStorage
-        console.log('📝 Using localStorage fallback for wallet auth');
-        const fallbackUser = {
-          id: walletAddress, // Use wallet address as ID
-          wallet_address: walletAddress, // Primary wallet address field
-          username: username,
-          email: null,
-          display_name: username,
-          avatar: null,
-          bio: null,
-          token_symbol: tokenSymbol || username.toUpperCase(),
-          followers_count: 0,
-          following_count: 0,
-          posts_count: 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          authMethod: 'wallet' as const,
-          hasBlockchainToken: !!blockchainTx,
-          blockchainTx: blockchainTx || null
-        };
-        
-        setUser(fallbackUser);
-        setAuthenticatedWallet(walletAddress);
-        setSuccess(`Welcome back, @${username}!`);
+
+        // No fallback - user must authenticate properly through backend
+        console.log('❌ [CHECK_AUTH] Could not restore user session - backend required');
         return;
       }
 
@@ -527,6 +573,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         localStorage.removeItem('wallet_address');
         localStorage.removeItem('token_symbol');
         localStorage.removeItem('blockchain_tx');
+        localStorage.removeItem('auth_method');
       }
     } finally {
       setLoading(false);
@@ -602,7 +649,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       setLoading(true);
       setError('');
 
-      console.log('🚀 Creating backend user (on-chain profile already created)');
+      console.log('🚀 Creating backend user', pendingAuthMethod === 'wallet' ? '(on-chain profile already created)' : '(zkLogin user)');
       console.log('🔑 Pending wallet address:', pendingWalletAddress);
 
       // Create user in backend database (on-chain profile was created in ProfileSetupFlow)
@@ -620,9 +667,9 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       const userState = {
         ...newUser,
         wallet_address: pendingWalletAddress,
-        authMethod: 'wallet' as const,
+        authMethod: pendingAuthMethod as 'wallet' | 'zklogin',
         tokenSymbol: userData.username.toUpperCase(),
-        hasOnChainProfile: true
+        hasOnChainProfile: pendingAuthMethod === 'wallet'
       };
 
       setUser(userState);
@@ -635,6 +682,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       localStorage.setItem('token_symbol', userData.username.toUpperCase());
       localStorage.setItem('wallet_auth_completed', Date.now().toString());
       localStorage.setItem('authenticated_wallet', pendingWalletAddress);
+      localStorage.setItem('auth_method', pendingAuthMethod);
 
       setSuccess(`Welcome to Cord, @${userData.username}!`);
 
@@ -648,12 +696,18 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
   // Handle meme launch cancellation
   const handleMemeLaunchCancel = () => {
+    const currentAuthMethod = pendingAuthMethod;
     setShowMemeLaunch(false);
     setPendingWalletAddress('');
+    setPendingAuthMethod('wallet');
     
     // Disconnect wallet since user cancelled registration
     if (currentWallet) {
       disconnect();
+    }
+
+    if (currentAuthMethod === 'zklogin') {
+      zkLoginSignOut();
     }
     
     setError('');
@@ -675,11 +729,16 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       localStorage.removeItem('authenticated_wallet');
       localStorage.removeItem('token_symbol');
       localStorage.removeItem('blockchain_tx');
+      localStorage.removeItem('auth_method');
       
       // Disconnect wallet if connected
       if (currentWallet) {
         console.log('Disconnecting wallet:', currentWallet);
         disconnect();
+      }
+
+      if (user?.authMethod === 'zklogin') {
+        zkLoginSignOut();
       }
       
       // Reset all states
@@ -711,6 +770,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     return (
       <ProfileSetupFlow
         walletAddress={pendingWalletAddress}
+        skipOnChain={pendingAuthMethod === 'zklogin'}
         onComplete={handleMemeLaunchComplete}
         onCancel={handleMemeLaunchCancel}
       />
@@ -734,23 +794,25 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
             {/* Logo/Brand */}
             <div className="text-center mb-12">
               <h1 className="text-4xl tracking-tight text-gray-900 mb-2">Cord</h1>
-              <p className="text-sm text-gray-600">Connect your wallet to continue</p>
+              <p className="text-sm text-gray-600">Connect your Sui wallet or sign in with Google</p>
             </div>
 
             {/* Error state */}
-            {error && (
+            {(error || zkError) && (
               <Alert variant="error" className="mb-6">
-                <AlertDescription>{error}</AlertDescription>
+                <AlertDescription>{error || zkError}</AlertDescription>
               </Alert>
             )}
 
             {/* Waiting state */}
-            {authenticating && (
+            {(authenticating || zkAuthenticating || zkLoading) && (
               <Alert className="mb-6">
                 <AlertDescription>
-                  <span className="font-medium">Waiting for signature…</span>
+                  <span className="font-medium">{authenticating ? 'Waiting for signature…' : 'Completing Google sign-in…'}</span>
                   <br />
-                  <span className="text-xs text-gray-600">Check your wallet and approve the request.</span>
+                  <span className="text-xs text-gray-600">
+                    {authenticating ? 'Check your wallet and approve the request.' : 'Returning you to Cord.'}
+                  </span>
                 </AlertDescription>
               </Alert>
             )}
@@ -759,9 +821,9 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
             <div className="space-y-3">
               <button
                 onClick={handleWalletConnect}
-                disabled={loading || authenticating}
+                disabled={loading || authenticating || zkLoading || zkAuthenticating}
                 className={`w-full bg-white border border-gray-200 p-4 hover:border-gray-300 transition-colors text-left ${
-                  loading || authenticating ? 'opacity-50 cursor-not-allowed' : ''
+                  loading || authenticating || zkLoading || zkAuthenticating ? 'opacity-50 cursor-not-allowed' : ''
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -779,17 +841,30 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
               </button>
 
               <button
-                disabled
-                className="w-full bg-white border border-gray-200 p-4 opacity-50 cursor-not-allowed text-left"
+                onClick={startGoogleLogin}
+                disabled={!zkLoginConfigured || loading || authenticating || zkLoading || zkAuthenticating}
+                className={`w-full bg-white border border-gray-200 p-4 hover:border-gray-300 transition-colors text-left ${
+                  !zkLoginConfigured || loading || authenticating || zkLoading || zkAuthenticating ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-base text-gray-900 mb-1">Ethereum</div>
-                    <div className="text-xs text-gray-500">MetaMask, WalletConnect, Coinbase</div>
+                    <div className="text-base text-gray-900 mb-1">Google</div>
+                    <div className="text-xs text-gray-500">Sign in with zkLogin</div>
                   </div>
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex-shrink-0" />
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-300 to-red-400 flex-shrink-0" />
                 </div>
+                {(zkLoading || zkAuthenticating) && (
+                  <div className="mt-3 text-xs text-gray-600">Redirecting to Google...</div>
+                )}
               </button>
+
+              {!zkLoginConfigured && (
+                <div className="text-xs text-gray-500">
+                  Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in.
+                </div>
+              )}
+
             </div>
 
             {/* Cancel button when authenticating */}
@@ -812,15 +887,49 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     );
   }
 
+  // Refresh user data from backend
+  const refreshUser = async () => {
+    if (!user?.wallet_address) {
+      console.log('⚠️ [REFRESH_USER] No wallet address to refresh');
+      return;
+    }
+
+    try {
+      console.log('🔄 [REFRESH_USER] Refreshing user data for:', user.wallet_address);
+      const response = await fetch(`http://localhost:3001/api/users/by-address/${user.wallet_address}`);
+      const data = await response.json();
+
+      if (data.success && data.data) {
+        console.log('✅ [REFRESH_USER] User data refreshed');
+        const refreshedUser = {
+          ...data.data,
+          authMethod: 'wallet' as const,
+          wallet_address: user.wallet_address
+        };
+        setUser(refreshedUser);
+
+        // Update localStorage
+        localStorage.setItem('username', refreshedUser.username);
+        localStorage.setItem('token_symbol', refreshedUser.token_symbol);
+      } else {
+        console.warn('⚠️ [REFRESH_USER] Failed to refresh user data');
+      }
+    } catch (error) {
+      console.error('❌ [REFRESH_USER] Error refreshing user:', error);
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      signOut, 
-      loading, 
-      handleWalletConnect, 
+    <AuthContext.Provider value={{
+      user,
+      setUser,
+      signOut,
+      loading,
+      handleWalletConnect,
       currentWallet,
       showMemeLaunch,
-      pendingWalletAddress
+      pendingWalletAddress,
+      refreshUser
     }}>
       {children}
     </AuthContext.Provider>

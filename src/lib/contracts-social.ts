@@ -1,8 +1,8 @@
 /**
- * MemeFlow Social Contract Integration
+ * Cord Social Contract Integration
  * 
  * This module provides TypeScript interfaces and functions for interacting
- * with MemeFlow social contracts on the Sui blockchain.
+ * with Cord social contracts on the Sui blockchain.
  */
 
 import { SuiClient } from '@mysten/sui.js/client';
@@ -10,7 +10,7 @@ import { TransactionBlock } from '@mysten/sui.js/transactions';
 
 // ===== Types and Interfaces =====
 
-export interface MemeFlowDeployment {
+export interface CordDeployment {
   network: string;
   rpcUrl: string;
   packageId: string;
@@ -37,7 +37,7 @@ export interface SocialProfile {
 /**
  * Load deployment configuration from JSON file or environment
  */
-export async function loadDeployment(network: string): Promise<MemeFlowDeployment | null> {
+export async function loadDeployment(network: string): Promise<CordDeployment | null> {
   try {
     // Try to load from public deployment file
     const response = await fetch(`/deployment-${network}.json`);

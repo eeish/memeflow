@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, AlertCircle, CheckCircle, AlertTriangle, Info, Bug, Wifi, Activity } from 'lucide-react';
+import { X, AlertCircle, CheckCircle, AlertTriangle, Info, Bug, Wifi, Activity } from '../ui-simple/Icons';
 import type { NotificationMessage, NotificationType, NotificationCategory } from '../../contexts/NotificationContext';
 import { cn } from '../../lib/utils';
 

@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { PostComposer } from './PostComposer';
-import { PostCard, type Post } from './PostCard';
 import { FeedTabs } from './FeedTabs';
 import { Alert, AlertDescription } from './ui-simple/Alert';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle } from './ui-simple/Icons';
+import { FeedPostCard } from './feed/FeedPostCard';
+import type { FeedPostItem } from './feed/types';
+import { formatTimeAgo, inferMediaType } from '../lib/feed';
 
 interface PlazaProps {
   user: any;
@@ -11,35 +13,41 @@ interface PlazaProps {
 }
 
 // Mock posts for now
-const mockPosts: Post[] = [
+const mockPosts: FeedPostItem[] = [
   {
     id: '1',
-    author: '@alice',
+    author: {
+      username: 'alice',
+    },
     content: 'Just exploring this new decentralized social platform. The privacy-first approach is refreshing.',
     timestamp: '2h',
-    likes: 12,
-    comments: 3,
+    likesCount: 12,
+    commentsCount: 3,
   },
   {
     id: '2',
-    author: '@bob',
+    author: {
+      username: 'bob',
+    },
     content: 'The minimalist design here is perfect. No clutter, just content.',
     timestamp: '4h',
-    likes: 8,
-    comments: 1,
+    likesCount: 8,
+    commentsCount: 1,
   },
   {
     id: '3',
-    author: '@charlie',
+    author: {
+      username: 'charlie',
+    },
     content: 'Love the bonding curve economics for following. Interesting incentive model.',
     timestamp: '6h',
-    likes: 15,
-    comments: 2,
+    likesCount: 15,
+    commentsCount: 2,
   },
 ];
 
 export const Plaza: React.FC<PlazaProps> = ({ user, onNavigateToProfile }) => {
-  const [posts, setPosts] = useState<Post[]>(mockPosts);
+  const [posts, setPosts] = useState<FeedPostItem[]>(mockPosts);
   const [activeTab, setActiveTab] = useState<'trending' | 'following'>('trending');
   const [error, setError] = useState<string | null>(null);
 
@@ -52,14 +60,28 @@ export const Plaza: React.FC<PlazaProps> = ({ user, onNavigateToProfile }) => {
 
         if (data.success && data.data && data.data.length > 0) {
           // Convert backend posts to our Post format
-          const convertedPosts: Post[] = data.data.map((p: any) => ({
-            id: p.id,
-            author: `@${p.author.username}`,
-            content: p.content,
-            timestamp: formatTimeAgo(p.created_at),
-            likes: p.likes_count || 0,
-            comments: p.comments_count || 0,
-          }));
+          const convertedPosts: FeedPostItem[] = data.data.map((p: any) => {
+            const mediaUrls = Array.isArray(p.media_urls) ? p.media_urls : [];
+            return {
+              id: p.id,
+              author: {
+                id: p.author.id,
+                username: p.author.username,
+                displayName: p.author.display_name,
+                avatarUrl: p.author.avatar_url,
+                bio: p.author.bio,
+                tokenSymbol: p.author.token_symbol,
+                walletAddress: p.author.wallet_address,
+                followersCount: p.author.followers_count,
+                holdersCount: p.author.followers_count,
+              },
+              content: p.content,
+              timestamp: formatTimeAgo(p.created_at),
+              likesCount: p.likes_count || 0,
+              commentsCount: p.comments_count || 0,
+              media: mediaUrls.map((url: string) => ({ type: inferMediaType(url), url })),
+            };
+          });
           setPosts(convertedPosts);
         }
       } catch (err) {
@@ -71,26 +93,25 @@ export const Plaza: React.FC<PlazaProps> = ({ user, onNavigateToProfile }) => {
     fetchPlazaPosts();
   }, []);
 
-  const formatTimeAgo = (dateString: string): string => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-
-    if (seconds < 60) return 'now';
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-    return `${Math.floor(seconds / 86400)}d`;
-  };
-
   const handleNewPost = (content: string, attachment?: { type: 'image' | 'video'; url: string; blobId?: string }) => {
-    const newPost: Post = {
+    const newPost: FeedPostItem = {
       id: Date.now().toString(),
-      author: `@${user.username}`,
+      author: {
+        id: user.id,
+        username: user.username,
+        displayName: user.display_name,
+        avatarUrl: user.avatar_url,
+        bio: user.bio,
+        tokenSymbol: user.token_symbol,
+        walletAddress: user.wallet_address,
+        followersCount: user.followers_count,
+        holdersCount: user.followers_count,
+      },
       content,
       timestamp: 'now',
-      likes: 0,
-      comments: 0,
-      attachment: attachment ? { type: attachment.type, url: attachment.url } : undefined,
+      likesCount: 0,
+      commentsCount: 0,
+      media: attachment ? [{ type: attachment.type, url: attachment.url }] : undefined,
     };
     setPosts([newPost, ...posts]);
   };
@@ -112,7 +133,12 @@ export const Plaza: React.FC<PlazaProps> = ({ user, onNavigateToProfile }) => {
           )}
 
           {posts.map((post) => (
-            <PostCard key={post.id} post={post} />
+            <FeedPostCard
+              key={post.id}
+              post={post}
+              tone="light"
+              onAuthorClick={onNavigateToProfile}
+            />
           ))}
 
           {/* Empty state */}

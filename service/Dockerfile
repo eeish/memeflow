@@ -1,4 +1,4 @@
-# MemeFlow Service Dockerfile
+# Cord Service Dockerfile
 
 # Build stage
 FROM rust:1.75 as builder
@@ -25,7 +25,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /app/target/release/memeflow-service .
+COPY --from=builder /app/target/release/cord-service .
 
 # Create directory for database
 RUN mkdir -p data
@@ -34,7 +34,7 @@ RUN mkdir -p data
 EXPOSE 3001
 
 # Set environment variables
-ENV DATABASE_URL=sqlite:./data/memeflow.db
+ENV DATABASE_URL=sqlite:./data/cord.db
 ENV HOST=0.0.0.0
 ENV PORT=3001
 ENV RUST_LOG=info
@@ -44,4 +44,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:3001/health || exit 1
 
 # Run the binary
-CMD ["./memeflow-service"]
+CMD ["./cord-service"]

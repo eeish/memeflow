@@ -3,7 +3,7 @@ import { Card } from './ui-simple/Card';
 import { Button } from './ui-simple/Button';
 import { Badge } from './ui-simple/Badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui-simple/Tabs';
-import { TrendingUp, TrendingDown, Eye, Star, Filter, Coins } from 'lucide-react';
+import { TrendingUp, TrendingDown, Eye, Star, Filter, Coins } from './ui-simple/Icons';
 
 interface TokenDashboardProps {
   user: any;

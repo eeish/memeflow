@@ -1,4 +1,4 @@
-import { TrendingUp, Users } from 'lucide-react';
+import { TrendingUp, Users } from './ui-simple/Icons';
 
 interface FeedTabsProps {
   activeTab: 'trending' | 'following';

@@ -1,6 +1,6 @@
 # Cloudflare R2 Setup Guide
 
-This guide will help you configure Cloudflare R2 storage for media uploads in MemeFlow.
+This guide will help you configure Cloudflare R2 storage for media uploads in Cord.
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ This guide will help you configure Cloudflare R2 storage for media uploads in Me
 1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/)
 2. Navigate to **R2** in the left sidebar
 3. Click **Create bucket**
-4. Choose a bucket name (e.g., `memeflow-media`)
+4. Choose a bucket name (e.g., `cord-media`)
 5. Click **Create bucket**
 
 ### 2. Enable Public Access (Required)
@@ -33,9 +33,9 @@ This guide will help you configure Cloudflare R2 storage for media uploads in Me
 1. In R2 dashboard, click **Manage R2 API Tokens**
 2. Click **Create API token**
 3. Configure the token:
-   - **Name**: `memeflow-uploads`
+   - **Name**: `cord-uploads`
    - **Permissions**: Select **Object Read & Write**
-   - **Bucket scope**: Select your bucket (`memeflow-media`)
+   - **Bucket scope**: Select your bucket (`cord-media`)
 4. Click **Create API Token**
 5. **IMPORTANT**: Copy the credentials immediately (you won't see them again):
    - Access Key ID
@@ -72,7 +72,7 @@ Or find it in:
    R2_ACCOUNT_ID=your_account_id_here
    R2_ACCESS_KEY_ID=your_access_key_id_here
    R2_SECRET_ACCESS_KEY=your_secret_access_key_here
-   R2_BUCKET_NAME=memeflow-media
+   R2_BUCKET_NAME=cord-media
    R2_PUBLIC_DOMAIN=pub-xxxxxxxxxxxxx.r2.dev
    ```
 

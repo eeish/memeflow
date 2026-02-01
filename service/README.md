@@ -1,6 +1,6 @@
-# MemeFlow Service
+# Cord Service
 
-A Rust-based backend service for the MemeFlow social trading platform, handling all non-blockchain functionality including user management, social features, analytics, and token metadata.
+A Rust-based backend service for the Cord social trading platform, handling all non-blockchain functionality including user management, social features, analytics, and token metadata.
 
 ## 🚀 Features
 
@@ -48,7 +48,7 @@ cargo build --release
 
 ## 🔍 Sui Address Verification
 
-MemeFlow Service includes comprehensive Sui address verification to ensure new users and prevent duplicate registrations:
+Cord Service includes comprehensive Sui address verification to ensure new users and prevent duplicate registrations:
 
 ### Key Features:
 - **Address Format Validation**: Validates Sui address format (0x + 64 hex chars)
@@ -109,7 +109,7 @@ MemeFlow Service includes comprehensive Sui address verification to ensure new u
 
 ```bash
 # Database
-DATABASE_URL=sqlite:./memeflow.db
+DATABASE_URL=sqlite:./cord.db
 
 # Server
 HOST=0.0.0.0
@@ -267,23 +267,23 @@ RUN cargo build --release
 
 FROM debian:bookworm-slim
 WORKDIR /app
-COPY --from=builder /app/target/release/memeflow-service .
+COPY --from=builder /app/target/release/cord-service .
 EXPOSE 3001
-CMD ["./memeflow-service"]
+CMD ["./cord-service"]
 ```
 
 ### Systemd Service
 ```ini
 [Unit]
-Description=MemeFlow Service
+Description=Cord Service
 After=network.target
 
 [Service]
 Type=simple
-User=memeflow
-ExecStart=/opt/memeflow/memeflow-service
+User=cord
+ExecStart=/opt/cord/cord-service
 Restart=always
-Environment=DATABASE_URL=sqlite:/opt/memeflow/memeflow.db
+Environment=DATABASE_URL=sqlite:/opt/cord/cord.db
 Environment=RUST_LOG=info
 
 [Install]
@@ -331,5 +331,5 @@ This project is licensed under the MIT License - see the [LICENSE](../LICENSE) f
 ---
 
 <div align="center">
-Built with ❤️ in Rust for the MemeFlow community 🚀
+Built with ❤️ in Rust for the Cord community 🚀
 </div>

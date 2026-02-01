@@ -7,17 +7,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui-simple/Tabs';
 import { Alert, AlertDescription } from './ui-simple/Alert';
 import { 
   User, 
-  Coins, 
-  TrendingUp, 
-  Users, 
+  Coins,
+  TrendingUp,
+  Users,
   MessageCircle,
   Heart,
-  Repeat2,
-  Share,
   ArrowLeft,
   DollarSign,
   Sparkles
-} from 'lucide-react';
+} from './ui-simple/Icons';
 import { FollowButton } from './FollowButton';
 import { useSocialFollow } from '../hooks/useSocialFollow';
 
@@ -49,7 +47,7 @@ export const UserProfile: React.FC<UserProfileProps> = ({ username, onBack }) =>
         avatar_url: null,
         bio: `Creator of innovative meme tokens. Building the future of social finance.`,
         location: 'Web3 Universe',
-        website: `${username}.memeflow.io`,
+        website: `${username}.cord.io`,
         joinedDate: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString(),
         followerCount: Math.floor(Math.random() * 10000),
         followingCount: Math.floor(Math.random() * 1000),
@@ -146,9 +144,15 @@ export const UserProfile: React.FC<UserProfileProps> = ({ username, onBack }) =>
               Back
             </Button>
           )}
-          <h2 className="text-2xl font-bold text-gray-900">
-            @{profileData.username}
-          </h2>
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-2xl font-bold text-gray-900">
+              {profileData.display_name || `@${profileData.username}`}
+            </h2>
+            {profileData.display_name &&
+              profileData.display_name.toLowerCase() !== profileData.username.toLowerCase() && (
+                <span className="text-sm text-gray-500">@{profileData.username}</span>
+              )}
+          </div>
         </div>
       </div>
 
@@ -266,24 +270,15 @@ export const UserProfile: React.FC<UserProfileProps> = ({ username, onBack }) =>
                     <span className="text-gray-500 text-sm">{formatTimeAgo(post.created_at)}</span>
                   </div>
                   <p className="text-gray-800 mb-3">{post.content}</p>
-                  <div className="flex items-center space-x-6 text-gray-500">
+                  <div className="flex items-center justify-end space-x-4 text-gray-500">
                     <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-pink-600 hover:bg-pink-50">
                       <Heart className="w-4 h-4" />
                       <span className="text-sm">{post.likes_count}</span>
                     </Button>
-                    
+
                     <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-blue-600 hover:bg-blue-50">
                       <MessageCircle className="w-4 h-4" />
                       <span className="text-sm">{post.comments_count}</span>
-                    </Button>
-                    
-                    <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-green-600 hover:bg-green-50">
-                      <Repeat2 className="w-4 h-4" />
-                      <span className="text-sm">{post.reposts_count}</span>
-                    </Button>
-                    
-                    <Button variant="ghost" size="sm" className="flex items-center space-x-2 hover:text-blue-600 hover:bg-blue-50">
-                      <Share className="w-4 h-4" />
                     </Button>
                   </div>
                 </div>

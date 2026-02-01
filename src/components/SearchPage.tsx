@@ -4,7 +4,7 @@ import { Button } from './ui-simple/Button';
 import { Input } from './ui-simple/Input';
 import { Avatar } from './ui-simple/Avatar';
 import { Badge } from './ui-simple/Badge';
-import { Search, X, TrendingUp, Users, Hash } from 'lucide-react';
+import { Search, X, TrendingUp, Users, Hash } from './ui-simple/Icons';
 
 interface SearchPageProps {
   user: any;
@@ -329,7 +329,7 @@ export const SearchPage: React.FC<SearchPageProps> = () => {
               </h3>
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-2 rounded bg-white/5">
-                  <span className="text-white">#MemeFlow</span>
+                  <span className="text-white">#Cord</span>
                   <span className="text-purple-400">1.2K posts</span>
                 </div>
                 <div className="flex items-center justify-between p-2 rounded bg-white/5">
