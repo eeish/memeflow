@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use aws_config::Region;
 use aws_credential_types::Credentials;
-use aws_sdk_s3::config::{Builder as S3ConfigBuilder, BehaviorVersion};
+use aws_sdk_s3::config::{BehaviorVersion, Builder as S3ConfigBuilder};
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
 use sha2::{Digest, Sha256};
@@ -19,14 +19,14 @@ impl R2Client {
     /// Create a new R2 client from environment variables
     pub async fn from_env() -> Result<Self> {
         // Load R2 configuration from environment
-        let account_id = env::var("R2_ACCOUNT_ID")
-            .context("R2_ACCOUNT_ID not set in environment")?;
-        let access_key_id = env::var("R2_ACCESS_KEY_ID")
-            .context("R2_ACCESS_KEY_ID not set in environment")?;
+        let account_id =
+            env::var("R2_ACCOUNT_ID").context("R2_ACCOUNT_ID not set in environment")?;
+        let access_key_id =
+            env::var("R2_ACCESS_KEY_ID").context("R2_ACCESS_KEY_ID not set in environment")?;
         let secret_access_key = env::var("R2_SECRET_ACCESS_KEY")
             .context("R2_SECRET_ACCESS_KEY not set in environment")?;
-        let bucket_name = env::var("R2_BUCKET_NAME")
-            .context("R2_BUCKET_NAME not set in environment")?;
+        let bucket_name =
+            env::var("R2_BUCKET_NAME").context("R2_BUCKET_NAME not set in environment")?;
         let public_domain = env::var("R2_PUBLIC_DOMAIN")
             .context("R2_PUBLIC_DOMAIN not set in environment (e.g., pub-xxxxx.r2.dev)")?;
 

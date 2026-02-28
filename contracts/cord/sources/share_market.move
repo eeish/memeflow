@@ -2,31 +2,28 @@
 /// - Each creator has a Market.
 /// - Creator must buy their first share at market creation.
 /// - Users can buy/sell ONE share max per wallet.
-/// - Total shares (and holders) capped at MAX_SUPPLY = 30.
+/// - Total shares (and holders) are capped by runtime_config::max_supply().
 /// - Bonding curve uses x = holders after buy / current holders for sell:
-///   p(x) = 0.02 + 0.35/(x+3) + 1/(38-x) SUI, where x ∈ {1..30}
+///   p(x) = 0.02 + 0.35/(x+3) + 1/(TERM2_DENOM_BASE-x) SUI,
+///   where TERM2_DENOM_BASE is generated from deploy config.
 module cord::share_market {
+    use cord::runtime_config;
     use sui::balance::{Self as balance, Balance};
     use sui::coin::{Self as coin, Coin};
     use sui::event;
-    use sui::object;
     use sui::sui::SUI;
     use sui::table::{Self as table, Table};
-    use sui::transfer;
-    use sui::tx_context::{Self as tx, TxContext};
+    use sui::tx_context::{Self as tx};
 
     /// =============================
     /// Constants & Error Codes
     /// =============================
 
-    const MAX_SUPPLY: u64 = 30;
-
-    /// p(x) = BASE + TERM1/(x+3) + TERM2/(38-x)  (in MIST)
+    /// p(x) = BASE + TERM1/(x+3) + TERM2/(TERM2_DENOM_BASE-x) (in MIST)
     const PRICE_BASE: u64 = 20_000_000;           // 0.02 SUI
     const PRICE_TERM1_NUM: u64 = 350_000_000;     // 0.35 SUI numerator
     const PRICE_TERM2_NUM: u64 = 1_000_000_000;   // 1.0 SUI numerator
     const TERM1_OFFSET: u64 = 3;                  // x + 3
-    const TERM2_DENOM_BASE: u64 = 38;             // 38 - x
 
     const E_SELF_PURCHASE: u64 = 1;
     const E_SUPPLY_LIMIT_EXCEEDED: u64 = 2;
@@ -36,12 +33,14 @@ module cord::share_market {
     const E_ALREADY_HOLDER: u64 = 6;
     const E_NOT_HOLDER: u64 = 7;
     const E_INVALID_X: u64 = 8;
+    const E_MARKET_GRADUATED: u64 = 9;
 
     /// =============================
     /// Events
     /// =============================
 
     public struct SharePurchased has copy, drop {
+        market_id: address,
         buyer: address,
         creator: address,
         price_mist: u64,
@@ -49,6 +48,7 @@ module cord::share_market {
     }
 
     public struct ShareSold has copy, drop {
+        market_id: address,
         seller: address,
         creator: address,
         refund_mist: u64,
@@ -65,9 +65,11 @@ module cord::share_market {
     public struct Market has key, store {
         id: object::UID,
         owner: address,
-        holders: u64,                 // current holders count (0..30)
+        holders: u64,                 // current holders count (0..max_supply)
         treasury: Balance<SUI>,       // accumulated revenue from sales
         positions: Table<address, bool>,
+        holder_list: vector<address>, // iterable holder addresses for graduation
+        graduated: bool,              // blocks buy/sell after graduation
     }
 
     /// =============================
@@ -94,6 +96,8 @@ module cord::share_market {
             holders: 1,
             treasury: balance::zero<SUI>(),
             positions: table::new<address, bool>(ctx),
+            holder_list: vector[sender],
+            graduated: false,
         };
 
         balance::join(&mut market.treasury, pay_bal);
@@ -107,9 +111,15 @@ module cord::share_market {
 
         // Record creator as the first holder
         table::add(&mut market.positions, sender, true);
-        transfer::transfer(market, sender);
+
+        // Get market ID before sharing
+        let market_id = object::uid_to_address(&market.id);
+
+        // Share the market so anyone can buy/sell shares
+        transfer::share_object(market);
 
         event::emit(SharePurchased {
+            market_id,
             buyer: sender,
             creator: sender,
             price_mist: price,
@@ -121,18 +131,19 @@ module cord::share_market {
     /// Bonding Curve
     /// =============================
 
-    /// Price in MIST for x-th holder/share, x ∈ {1..30}
+    /// Price in MIST for x-th holder/share, x ∈ {1..max_supply}
     fun price_mist(x: u64): u64 {
-        assert!(x >= 1 && x <= MAX_SUPPLY, E_INVALID_X);
+        let max_supply = runtime_config::max_supply();
+        assert!(x >= 1 && x <= max_supply, E_INVALID_X);
 
         let term1 = PRICE_TERM1_NUM / (x + TERM1_OFFSET);
-        let term2 = PRICE_TERM2_NUM / (TERM2_DENOM_BASE - x); // safe for x<=30
+        let term2 = PRICE_TERM2_NUM / (runtime_config::term2_denom_base() - x);
         PRICE_BASE + term1 + term2
     }
 
     /// Optional helper for UI quoting: next buy price (aborts if sold out)
     public fun quote_next_buy_price_mist(market: &Market): u64 {
-        assert!(market.holders < MAX_SUPPLY, E_SUPPLY_LIMIT_EXCEEDED);
+        assert!(market.holders < runtime_config::max_supply(), E_SUPPLY_LIMIT_EXCEEDED);
         price_mist(market.holders + 1)
     }
 
@@ -144,7 +155,7 @@ module cord::share_market {
 
     public fun get_market_owner(market: &Market): address { market.owner }
     public fun get_market_holders(market: &Market): u64 { market.holders }
-    public fun get_max_supply(): u64 { MAX_SUPPLY }
+    public fun get_max_supply(): u64 { runtime_config::max_supply() }
 
     /// =============================
     /// Buy (1 share max per wallet)
@@ -157,6 +168,9 @@ module cord::share_market {
     ) {
         let buyer = tx::sender(ctx);
 
+        // cannot buy after graduation
+        assert!(!market.graduated, E_MARKET_GRADUATED);
+
         // disallow buying own market (keep your original rule)
         assert!(buyer != market.owner, E_SELF_PURCHASE);
 
@@ -165,7 +179,7 @@ module cord::share_market {
 
         // supply cap
         let new_holders = market.holders + 1;
-        assert!(new_holders <= MAX_SUPPLY, E_SUPPLY_LIMIT_EXCEEDED);
+        assert!(new_holders <= runtime_config::max_supply(), E_SUPPLY_LIMIT_EXCEEDED);
 
         // pricing uses x = holders after buy
         let price = price_mist(new_holders);
@@ -187,9 +201,11 @@ module cord::share_market {
 
         // record holder + update state
         table::add(&mut market.positions, buyer, true);
+        market.holder_list.push_back(buyer);
         market.holders = new_holders;
 
         event::emit(SharePurchased {
+            market_id: object::uid_to_address(&market.id),
             buyer,
             creator: market.owner,
             price_mist: price,
@@ -207,6 +223,9 @@ module cord::share_market {
     ) {
         let seller = tx::sender(ctx);
 
+        // cannot sell after graduation
+        assert!(!market.graduated, E_MARKET_GRADUATED);
+
         assert!(market.holders > 0, E_ZERO_SUPPLY);
         assert!(table::contains(&market.positions, seller), E_NOT_HOLDER);
 
@@ -223,13 +242,57 @@ module cord::share_market {
 
         // update holder table + state
         table::remove(&mut market.positions, seller);
+
+        // remove seller from holder_list via swap-remove
+        let len = market.holder_list.length();
+        let mut i = 0;
+        while (i < len) {
+            if (market.holder_list[i] == seller) {
+                market.holder_list.swap_remove(i);
+                break
+            };
+            i = i + 1;
+        };
+
         market.holders = market.holders - 1;
 
         event::emit(ShareSold {
+            market_id: object::uid_to_address(&market.id),
             seller,
             creator: market.owner,
             refund_mist: refund,
             new_holders: market.holders,
         });
+    }
+
+    /// =============================
+    /// Graduation Accessors
+    /// =============================
+
+    public fun is_graduated(market: &Market): bool { market.graduated }
+
+    public(package) fun get_holder_list(market: &Market): &vector<address> {
+        &market.holder_list
+    }
+
+    public(package) fun drain_treasury(market: &mut Market): Balance<SUI> {
+        let amount = balance::value(&market.treasury);
+        balance::split(&mut market.treasury, amount)
+    }
+
+    public(package) fun set_graduated(market: &mut Market) {
+        market.graduated = true;
+    }
+
+    public(package) fun set_not_graduated(market: &mut Market) {
+        market.graduated = false;
+    }
+
+    public(package) fun add_to_treasury(market: &mut Market, funds: Balance<SUI>) {
+        balance::join(&mut market.treasury, funds);
+    }
+
+    public(package) fun get_market_uid(market: &Market): &object::UID {
+        &market.id
     }
 }

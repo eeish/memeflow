@@ -1,12 +1,29 @@
-use crate::{models::*, username_validation, profile_validation, AppState};
-use axum::{
-    extract::{Multipart, Path, Query, State},
-    http::StatusCode,
-    response::Json,
+use crate::{
+    creator_token_builder::{self, BuildCreatorTokenRequest},
+    models::*,
+    profile_validation, username_validation, AppState,
 };
-use serde::{Deserialize, Serialize};
+use axum::{
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Multipart, Path, Query, State,
+    },
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Json},
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use dashmap::DashMap;
+use futures_util::{SinkExt, StreamExt};
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{HashSet, VecDeque};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+use tokio::sync::{mpsc, Notify, Semaphore};
+use uuid::Uuid;
 #[derive(Deserialize)]
 pub struct PlazaQuery {
     pub limit: Option<i32>,
@@ -15,7 +32,505 @@ pub struct PlazaQuery {
 
 // Health check endpoint
 pub async fn health_check() -> Json<ApiResponse<String>> {
-    Json(ApiResponse::success("Cord Service is running! 🚀".to_string()))
+    Json(ApiResponse::success(
+        "Cord Service is running! 🚀".to_string(),
+    ))
+}
+
+const DEFAULT_BUILD_WINDOW_SECS: i64 = 600;
+const DEFAULT_BUILD_MAX_CLOCK_SKEW_SECS: i64 = 300;
+const DEFAULT_BUILD_NONCE_TTL_SECS: i64 = 1800;
+const DEFAULT_BUILD_MAX_PER_IP: usize = 8;
+const DEFAULT_BUILD_MAX_PER_OWNER: usize = 4;
+const DEFAULT_BUILD_MAX_CONCURRENT: usize = 2;
+
+static CREATOR_BUILD_IP_REQUESTS: Lazy<DashMap<String, VecDeque<i64>>> = Lazy::new(DashMap::new);
+static CREATOR_BUILD_OWNER_REQUESTS: Lazy<DashMap<String, VecDeque<i64>>> = Lazy::new(DashMap::new);
+static CREATOR_BUILD_USED_NONCES: Lazy<DashMap<String, i64>> = Lazy::new(DashMap::new);
+static CREATOR_BUILD_SEMAPHORE: Lazy<Semaphore> = Lazy::new(|| {
+    Semaphore::new(read_env_usize(
+        "CREATOR_TOKEN_BUILD_MAX_CONCURRENT",
+        DEFAULT_BUILD_MAX_CONCURRENT,
+    ))
+});
+
+fn now_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn read_env_usize(key: &str, default: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(default)
+}
+
+fn read_env_i64(key: &str, default: i64) -> i64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(default)
+}
+
+fn extract_client_ip(headers: &HeaderMap) -> String {
+    let forwarded = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    if let Some(ip) = forwarded {
+        return ip.to_string();
+    }
+    let real_ip = headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    if let Some(ip) = real_ip {
+        return ip.to_string();
+    }
+    "unknown".to_string()
+}
+
+fn prune_window(entries: &mut VecDeque<i64>, cutoff_ms: i64) {
+    while entries.front().is_some_and(|ts| *ts < cutoff_ms) {
+        entries.pop_front();
+    }
+}
+
+fn enforce_rate_limit(
+    map: &DashMap<String, VecDeque<i64>>,
+    key: &str,
+    limit: usize,
+    window_ms: i64,
+    label: &str,
+    now_ms: i64,
+) -> Result<(), String> {
+    let cutoff = now_ms - window_ms;
+    let mut entry = map.entry(key.to_string()).or_insert_with(VecDeque::new);
+    prune_window(&mut entry, cutoff);
+    if entry.len() >= limit {
+        return Err(format!("{label} rate limit exceeded"));
+    }
+    entry.push_back(now_ms);
+    Ok(())
+}
+
+fn enforce_optional_build_api_key(headers: &HeaderMap) -> Result<(), String> {
+    let expected = match std::env::var("CREATOR_TOKEN_BUILD_API_KEY") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => return Ok(()),
+    };
+
+    let header_key = headers
+        .get("x-creator-build-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .unwrap_or("");
+
+    let bearer = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .and_then(|raw| raw.strip_prefix("Bearer "))
+        .unwrap_or("");
+
+    if header_key == expected || bearer == expected {
+        Ok(())
+    } else {
+        Err("Missing or invalid creator build API key".to_string())
+    }
+}
+
+fn enforce_build_request_security(
+    owner_address: &str,
+    auth_nonce: &str,
+    auth_timestamp_ms: i64,
+    headers: &HeaderMap,
+) -> Result<(), String> {
+    enforce_optional_build_api_key(headers)?;
+
+    if !creator_token_builder::validate_auth_nonce(auth_nonce) {
+        return Err("Invalid authorization nonce".to_string());
+    }
+
+    let now_ms = now_millis();
+    let max_clock_skew_ms = read_env_i64(
+        "CREATOR_TOKEN_BUILD_MAX_CLOCK_SKEW_SECS",
+        DEFAULT_BUILD_MAX_CLOCK_SKEW_SECS,
+    ) * 1000;
+    if auth_timestamp_ms <= 0 || (now_ms - auth_timestamp_ms).abs() > max_clock_skew_ms {
+        return Err("Authorization timestamp is outside the accepted window".to_string());
+    }
+
+    let nonce_ttl_ms = read_env_i64(
+        "CREATOR_TOKEN_BUILD_NONCE_TTL_SECS",
+        DEFAULT_BUILD_NONCE_TTL_SECS,
+    ) * 1000;
+    let nonce_key = format!("{owner_address}:{}", auth_nonce.trim());
+    if let Some(expiry) = CREATOR_BUILD_USED_NONCES.get(&nonce_key) {
+        if *expiry > now_ms {
+            return Err("Authorization nonce has already been used".to_string());
+        }
+    }
+    CREATOR_BUILD_USED_NONCES.insert(nonce_key, now_ms + nonce_ttl_ms);
+    if CREATOR_BUILD_USED_NONCES.len() > 50_000 {
+        CREATOR_BUILD_USED_NONCES.clear();
+    }
+
+    let window_ms =
+        read_env_i64("CREATOR_TOKEN_BUILD_WINDOW_SECS", DEFAULT_BUILD_WINDOW_SECS) * 1000;
+    let ip_limit = read_env_usize("CREATOR_TOKEN_BUILD_MAX_PER_IP", DEFAULT_BUILD_MAX_PER_IP);
+    let owner_limit = read_env_usize(
+        "CREATOR_TOKEN_BUILD_MAX_PER_OWNER",
+        DEFAULT_BUILD_MAX_PER_OWNER,
+    );
+    let client_ip = extract_client_ip(headers);
+
+    enforce_rate_limit(
+        &CREATOR_BUILD_IP_REQUESTS,
+        &client_ip,
+        ip_limit,
+        window_ms,
+        "IP",
+        now_ms,
+    )?;
+    enforce_rate_limit(
+        &CREATOR_BUILD_OWNER_REQUESTS,
+        owner_address,
+        owner_limit,
+        window_ms,
+        "Owner",
+        now_ms,
+    )?;
+
+    Ok(())
+}
+
+pub async fn build_creator_token_package_handler(
+    State(app_state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<BuildCreatorTokenRequest>,
+) -> impl IntoResponse {
+    let owner_address = match creator_token_builder::normalize_owner_address(&request.owner_address)
+    {
+        Some(value) => value,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::error("Invalid owner_address".to_string())),
+            );
+        }
+    };
+    let token_name = match creator_token_builder::normalize_token_name(&request.token_name) {
+        Some(value) => value,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::error(
+                    "Invalid token_name: use 1-32 ASCII characters [A-Za-z0-9 _-.]".to_string(),
+                )),
+            );
+        }
+    };
+    let token_symbol = match creator_token_builder::normalize_token_symbol(&request.token_symbol) {
+        Some(value) => value,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::error(
+                    "Invalid token_symbol: use 1-10 uppercase alphanumeric characters".to_string(),
+                )),
+            );
+        }
+    };
+
+    if let Err(error) = enforce_build_request_security(
+        &owner_address,
+        request.auth_nonce.trim(),
+        request.auth_timestamp_ms,
+        &headers,
+    ) {
+        let status = if error.contains("rate limit") {
+            StatusCode::TOO_MANY_REQUESTS
+        } else if error.contains("API key") {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::FORBIDDEN
+        };
+        return (status, Json(ApiResponse::error(error)));
+    }
+
+    let expected_auth_message = creator_token_builder::build_creator_token_auth_message(
+        &owner_address,
+        &token_name,
+        &token_symbol,
+        request.auth_timestamp_ms,
+        request.auth_nonce.trim(),
+    );
+    if let Err(error) = creator_token_builder::verify_creator_token_auth_signature(
+        &owner_address,
+        &expected_auth_message,
+        &request.auth_signature,
+    ) {
+        tracing::warn!(
+            owner_address,
+            "Creator token build request signature rejected: {}",
+            error
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse::error(
+                "Invalid authorization signature for creator token build".to_string(),
+            )),
+        );
+    }
+
+    let owner_exists = app_state
+        .db
+        .get_user_by_address(&owner_address)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+        || app_state
+            .db
+            .get_user_by_address(request.owner_address.trim())
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+
+    if !owner_exists {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ApiResponse::error(
+                "Owner address is not registered".to_string(),
+            )),
+        );
+    }
+
+    let _permit = match CREATOR_BUILD_SEMAPHORE.acquire().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiResponse::error(
+                    "Creator token build service is temporarily unavailable".to_string(),
+                )),
+            );
+        }
+    };
+
+    let secure_request = BuildCreatorTokenRequest {
+        owner_address,
+        token_name,
+        token_symbol,
+        auth_nonce: request.auth_nonce,
+        auth_timestamp_ms: request.auth_timestamp_ms,
+        auth_signature: request.auth_signature,
+    };
+
+    match creator_token_builder::build_creator_token_package(secure_request) {
+        Ok(response) => (StatusCode::OK, Json(ApiResponse::success(response))),
+        Err(error) => {
+            tracing::error!("Failed to build creator token package: {}", error);
+            (StatusCode::BAD_REQUEST, Json(ApiResponse::error(error)))
+        }
+    }
+}
+
+// Notifications: create and deliver
+pub async fn create_notification(
+    State(app_state): State<AppState>,
+    Json(request): Json<CreateNotificationRequest>,
+) -> Json<ApiResponse<Notification>> {
+    if request.content.trim().is_empty() {
+        return Json(ApiResponse::error(
+            "Notification content cannot be empty".to_string(),
+        ));
+    }
+
+    match app_state
+        .db
+        .create_notification(
+            &request.user_id,
+            request.content.trim(),
+            "general",
+            None,
+            None,
+            None,
+        )
+        .await
+    {
+        Ok(notification) => {
+            app_state.notification_notify.notify_one();
+            Json(ApiResponse::success(notification))
+        }
+        Err(e) => {
+            tracing::error!("Failed to create notification: {}", e);
+            Json(ApiResponse::error(
+                "Failed to create notification".to_string(),
+            ))
+        }
+    }
+}
+
+pub async fn get_notifications_by_user(
+    State(app_state): State<AppState>,
+    Path(user_id): Path<String>,
+) -> Json<ApiResponse<Vec<Notification>>> {
+    if Uuid::parse_str(&user_id).is_err() {
+        return Json(ApiResponse::error("Invalid user id".to_string()));
+    }
+
+    match app_state.db.fetch_notifications_by_user(&user_id).await {
+        Ok(notifications) => Json(ApiResponse::success(notifications)),
+        Err(e) => {
+            tracing::error!("Failed to fetch notifications for user {}: {}", user_id, e);
+            Json(ApiResponse::error(
+                "Failed to fetch notifications".to_string(),
+            ))
+        }
+    }
+}
+
+pub async fn mark_notification_read(
+    State(app_state): State<AppState>,
+    Path(notification_id): Path<String>,
+) -> Json<ApiResponse<String>> {
+    match app_state
+        .db
+        .update_notification_status(&notification_id, "read")
+        .await
+    {
+        Ok(()) => Json(ApiResponse::success(
+            "Notification marked as read".to_string(),
+        )),
+        Err(e) => {
+            tracing::error!(
+                "Failed to mark notification {} as read: {}",
+                notification_id,
+                e
+            );
+            Json(ApiResponse::error(
+                "Failed to mark notification as read".to_string(),
+            ))
+        }
+    }
+}
+
+pub async fn mark_all_notifications_read(
+    State(app_state): State<AppState>,
+    Path(user_id): Path<String>,
+) -> Json<ApiResponse<String>> {
+    if Uuid::parse_str(&user_id).is_err() {
+        return Json(ApiResponse::error("Invalid user id".to_string()));
+    }
+
+    match app_state.db.mark_all_notifications_read(&user_id).await {
+        Ok(count) => Json(ApiResponse::success(format!(
+            "{} notifications marked as read",
+            count
+        ))),
+        Err(e) => {
+            tracing::error!(
+                "Failed to mark all notifications read for user {}: {}",
+                user_id,
+                e
+            );
+            Json(ApiResponse::error(
+                "Failed to mark notifications as read".to_string(),
+            ))
+        }
+    }
+}
+
+pub async fn ws_notifications(
+    Path(user_id): Path<String>,
+    State(app_state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, StatusCode> {
+    // Validate user_id is a valid UUID
+    if Uuid::parse_str(&user_id).is_err() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    Ok(ws.on_upgrade(move |socket| handle_notification_socket(socket, app_state, user_id)))
+}
+
+async fn handle_notification_socket(socket: WebSocket, app_state: AppState, user_id: String) {
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+
+    app_state.notification_sessions.insert(user_id.clone(), tx);
+
+    let send_task = tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            if ws_sender.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    while let Some(Ok(msg)) = ws_receiver.next().await {
+        if matches!(msg, Message::Close(_)) {
+            break;
+        }
+    }
+
+    app_state.notification_sessions.remove(&user_id);
+    send_task.abort();
+}
+
+pub async fn notification_worker(
+    db: Arc<crate::database::Database>,
+    notify: Arc<Notify>,
+    sessions: Arc<DashMap<String, mpsc::UnboundedSender<Message>>>,
+) {
+    loop {
+        tokio::select! {
+            _ = notify.notified() => {}
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+        }
+
+        let pending = match db.fetch_pending_notifications(100).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::error!("Failed to fetch pending notifications: {}", e);
+                continue;
+            }
+        };
+
+        for notification in pending {
+            if let Some(sender) = sessions.get(&notification.user_id) {
+                let payload = serde_json::json!({
+                    "id": notification.id,
+                    "user_id": notification.user_id,
+                    "content": notification.content,
+                    "notification_type": notification.notification_type,
+                    "created_at": notification.created_at,
+                });
+
+                if sender.send(Message::Text(payload.to_string())).is_ok() {
+                    if let Err(e) = db
+                        .update_notification_status(&notification.id, "sent")
+                        .await
+                    {
+                        tracing::error!("Failed to mark notification sent: {}", e);
+                    }
+                } else {
+                    sessions.remove(&notification.user_id);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -120,22 +635,20 @@ pub async fn zklogin_salt_proxy(
         .unwrap_or_else(|_| "https://salt.api.mystenlabs.com/get_salt".to_string());
 
     let client = reqwest::Client::new();
-    let response = client
-        .post(url)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!("zkLogin salt proxy request failed: {}", e);
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": "Upstream request failed" })),
-            )
-        })?;
+    let response = client.post(url).json(&request).send().await.map_err(|e| {
+        tracing::error!("zkLogin salt proxy request failed: {}", e);
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": "Upstream request failed" })),
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_else(|_| "<unreadable body>".to_string());
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<unreadable body>".to_string());
         tracing::error!(
             "zkLogin salt proxy upstream error: status={} body={}",
             status,
@@ -151,16 +664,13 @@ pub async fn zklogin_salt_proxy(
         ));
     }
 
-    let body = response
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| {
-            tracing::error!("zkLogin salt proxy response decode failed: {}", e);
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": "Upstream response decode failed" })),
-            )
-        })?;
+    let body = response.json::<serde_json::Value>().await.map_err(|e| {
+        tracing::error!("zkLogin salt proxy response decode failed: {}", e);
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": "Upstream response decode failed" })),
+        )
+    })?;
 
     Ok(Json(body))
 }
@@ -173,22 +683,20 @@ pub async fn zklogin_proof_proxy(
         .unwrap_or_else(|_| "https://prover-dev.mystenlabs.com/v1".to_string());
 
     let client = reqwest::Client::new();
-    let response = client
-        .post(url)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!("zkLogin prover proxy request failed: {}", e);
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": "Upstream request failed" })),
-            )
-        })?;
+    let response = client.post(url).json(&request).send().await.map_err(|e| {
+        tracing::error!("zkLogin prover proxy request failed: {}", e);
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": "Upstream request failed" })),
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_else(|_| "<unreadable body>".to_string());
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<unreadable body>".to_string());
         tracing::error!(
             "zkLogin prover proxy upstream error: status={} body={}",
             status,
@@ -204,16 +712,13 @@ pub async fn zklogin_proof_proxy(
         ));
     }
 
-    let body = response
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| {
-            tracing::error!("zkLogin prover proxy response decode failed: {}", e);
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": "Upstream response decode failed" })),
-            )
-        })?;
+    let body = response.json::<serde_json::Value>().await.map_err(|e| {
+        tracing::error!("zkLogin prover proxy response decode failed: {}", e);
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": "Upstream response decode failed" })),
+        )
+    })?;
 
     Ok(Json(body))
 }
@@ -223,17 +728,26 @@ pub async fn get_plaza_posts(
     State(app_state): State<AppState>,
     Query(params): Query<PlazaQuery>,
 ) -> Json<ApiResponse<Vec<PostWithAuthor>>> {
-    tracing::info!("Getting plaza posts with limit={:?}, offset={:?}", 
-        params.limit, params.offset);
-    
-    match app_state.db.get_plaza_posts(params.limit, params.offset).await {
+    tracing::info!(
+        "Getting plaza posts with limit={:?}, offset={:?}",
+        params.limit,
+        params.offset
+    );
+
+    match app_state
+        .db
+        .get_plaza_posts(params.limit, params.offset)
+        .await
+    {
         Ok(posts) => {
             tracing::info!("Retrieved {} posts for plaza", posts.len());
             Json(ApiResponse::success(posts))
         }
         Err(e) => {
             tracing::error!("Failed to get plaza posts: {}", e);
-            Json(ApiResponse::error("Failed to retrieve plaza posts".to_string()))
+            Json(ApiResponse::error(
+                "Failed to retrieve plaza posts".to_string(),
+            ))
         }
     }
 }
@@ -244,14 +758,14 @@ pub async fn check_user_exists_by_address(
     Path(address): Path<String>,
 ) -> Json<ApiResponse<bool>> {
     tracing::info!("Checking if user exists with address: {}", address);
-    
+
     match app_state.db.user_exists_by_address(&address).await {
-        Ok(exists) => {
-            Json(ApiResponse::success(exists))
-        }
+        Ok(exists) => Json(ApiResponse::success(exists)),
         Err(e) => {
             tracing::error!("Failed to check user existence: {}", e);
-            Json(ApiResponse::error("Failed to check user existence".to_string()))
+            Json(ApiResponse::error(
+                "Failed to check user existence".to_string(),
+            ))
         }
     }
 }
@@ -263,12 +777,8 @@ pub async fn get_user_by_address(
     tracing::info!("Getting user by address: {}", address);
 
     match app_state.db.get_user_by_address(&address).await {
-        Ok(Some(user)) => {
-            Json(ApiResponse::success(user))
-        }
-        Ok(None) => {
-            Json(ApiResponse::error("User not found".to_string()))
-        }
+        Ok(Some(user)) => Json(ApiResponse::success(user)),
+        Ok(None) => Json(ApiResponse::error("User not found".to_string())),
         Err(e) => {
             tracing::error!("Failed to get user by address: {}", e);
             Json(ApiResponse::error("Failed to retrieve user".to_string()))
@@ -283,12 +793,8 @@ pub async fn get_user_by_id(
     tracing::info!("Getting user by id: {}", user_id);
 
     match app_state.db.get_user_by_id(&user_id).await {
-        Ok(Some(user)) => {
-            Json(ApiResponse::success(user))
-        }
-        Ok(None) => {
-            Json(ApiResponse::error("User not found".to_string()))
-        }
+        Ok(Some(user)) => Json(ApiResponse::success(user)),
+        Ok(None) => Json(ApiResponse::error("User not found".to_string())),
         Err(e) => {
             tracing::error!("Failed to get user by id: {}", e);
             Json(ApiResponse::error("Failed to retrieve user".to_string()))
@@ -340,7 +846,9 @@ pub async fn check_username_available(
         }
         Err(e) => {
             tracing::error!("Failed to check username: {}", e);
-            Json(ApiResponse::error("Failed to check username availability".to_string()))
+            Json(ApiResponse::error(
+                "Failed to check username availability".to_string(),
+            ))
         }
     }
 }
@@ -349,8 +857,11 @@ pub async fn create_user(
     State(app_state): State<AppState>,
     Json(mut request): Json<CreateUserRequest>,
 ) -> Json<ApiResponse<User>> {
-    tracing::info!("Creating new user: wallet_address={:?}, username={}",
-        request.wallet_address, request.username);
+    tracing::info!(
+        "Creating new user: wallet_address={:?}, username={}",
+        request.wallet_address,
+        request.username
+    );
 
     // Validate and normalize username
     let normalized_username = match username_validation::validate_username(&request.username) {
@@ -365,12 +876,16 @@ pub async fn create_user(
     match app_state.db.username_exists(&normalized_username).await {
         Ok(true) => {
             tracing::warn!("Username already taken: {}", normalized_username);
-            return Json(ApiResponse::error("This username is already taken".to_string()));
+            return Json(ApiResponse::error(
+                "This username is already taken".to_string(),
+            ));
         }
         Ok(false) => {}
         Err(e) => {
             tracing::error!("Failed to check username: {}", e);
-            return Json(ApiResponse::error("Failed to validate username".to_string()));
+            return Json(ApiResponse::error(
+                "Failed to validate username".to_string(),
+            ));
         }
     }
 
@@ -410,15 +925,23 @@ pub async fn update_user_profile(
         match profile_validation::validate_username_for_update(username) {
             Ok(normalized) => {
                 // Check if username is available (excluding current user)
-                match app_state.db.username_exists_excluding_user(&normalized, &user_id).await {
+                match app_state
+                    .db
+                    .username_exists_excluding_user(&normalized, &user_id)
+                    .await
+                {
                     Ok(true) => {
                         tracing::warn!("Username already taken: {}", normalized);
-                        return Json(ApiResponse::error("This username is already taken".to_string()));
+                        return Json(ApiResponse::error(
+                            "This username is already taken".to_string(),
+                        ));
                     }
                     Ok(false) => Some(normalized),
                     Err(e) => {
                         tracing::error!("Failed to check username availability: {}", e);
-                        return Json(ApiResponse::error("Failed to validate username".to_string()));
+                        return Json(ApiResponse::error(
+                            "Failed to validate username".to_string(),
+                        ));
                     }
                 }
             }
@@ -458,12 +981,16 @@ pub async fn update_user_profile(
     };
 
     // Update in database
-    match app_state.db.update_user_profile(
-        &user_id,
-        validated_username,
-        validated_bio,
-        validated_avatar,
-    ).await {
+    match app_state
+        .db
+        .update_user_profile(
+            &user_id,
+            validated_username,
+            validated_bio,
+            validated_avatar,
+        )
+        .await
+    {
         Ok(user) => {
             tracing::info!("Profile updated successfully for user: {}", user_id);
             Json(ApiResponse::success(user))
@@ -481,19 +1008,29 @@ pub async fn get_news_feed(
     Path(user_id): Path<String>,
     Query(params): Query<PlazaQuery>,
 ) -> Json<ApiResponse<Vec<PostWithAuthor>>> {
-    tracing::info!("Getting news feed for user: {} with limit={:?}, offset={:?}",
-        user_id, params.limit, params.offset);
+    tracing::info!(
+        "Getting news feed for user: {} with limit={:?}, offset={:?}",
+        user_id,
+        params.limit,
+        params.offset
+    );
 
     // For now, return the same as Plaza (all posts)
     // In the future, this could be personalized based on who the user follows
-    match app_state.db.get_plaza_posts(params.limit, params.offset).await {
+    match app_state
+        .db
+        .get_plaza_posts(params.limit, params.offset)
+        .await
+    {
         Ok(posts) => {
             tracing::info!("Retrieved {} posts for user feed", posts.len());
             Json(ApiResponse::success(posts))
         }
         Err(e) => {
             tracing::error!("Failed to get user feed: {}", e);
-            Json(ApiResponse::error("Failed to retrieve news feed".to_string()))
+            Json(ApiResponse::error(
+                "Failed to retrieve news feed".to_string(),
+            ))
         }
     }
 }
@@ -504,17 +1041,27 @@ pub async fn get_user_posts(
     Path(user_id): Path<String>,
     Query(params): Query<PlazaQuery>,
 ) -> Json<ApiResponse<Vec<PostWithAuthor>>> {
-    tracing::info!("Getting posts for user {} with limit={:?}, offset={:?}",
-        user_id, params.limit, params.offset);
+    tracing::info!(
+        "Getting posts for user {} with limit={:?}, offset={:?}",
+        user_id,
+        params.limit,
+        params.offset
+    );
 
-    match app_state.db.get_user_posts(&user_id, params.limit, params.offset).await {
+    match app_state
+        .db
+        .get_user_posts(&user_id, params.limit, params.offset)
+        .await
+    {
         Ok(posts) => {
             tracing::info!("Retrieved {} posts for user {}", posts.len(), user_id);
             Json(ApiResponse::success(posts))
         }
         Err(e) => {
             tracing::error!("Failed to get user posts: {}", e);
-            Json(ApiResponse::error("Failed to retrieve user posts".to_string()))
+            Json(ApiResponse::error(
+                "Failed to retrieve user posts".to_string(),
+            ))
         }
     }
 }
@@ -525,8 +1072,12 @@ pub async fn create_post(
     State(app_state): State<AppState>,
     Json(request): Json<CreatePostRequest>,
 ) -> Json<ApiResponse<CreatePostResponse>> {
-    tracing::info!("Creating new post: author_id={}, wallet={}, content_length={}",
-        request.author_id, request.wallet_address, request.content.len());
+    tracing::info!(
+        "Creating new post: author_id={}, wallet={}, content_length={}",
+        request.author_id,
+        request.wallet_address,
+        request.content.len()
+    );
 
     // Generate timestamp for hash computation (Unix milliseconds)
     let timestamp_ms = chrono::Utc::now().timestamp_millis();
@@ -553,13 +1104,24 @@ pub async fn create_post(
         }
     };
 
-    tracing::info!("Computed content hash: {} (timestamp_ms={})", content_hash, timestamp_ms);
+    tracing::info!(
+        "Computed content hash: {} (timestamp_ms={})",
+        content_hash,
+        timestamp_ms
+    );
 
     // Create post in database with hash
-    match app_state.db.create_post(request, Some(content_hash.clone()), Some(timestamp_ms)).await {
+    match app_state
+        .db
+        .create_post(request, Some(content_hash.clone()), Some(timestamp_ms))
+        .await
+    {
         Ok(post) => {
-            tracing::info!("Post created successfully: id={}, hash={}",
-                post.id, content_hash);
+            tracing::info!(
+                "Post created successfully: id={}, hash={}",
+                post.id,
+                content_hash
+            );
 
             let response = CreatePostResponse {
                 post,
@@ -583,16 +1145,472 @@ pub async fn like_post(
     Path(post_id): Path<String>,
     Json(request): Json<LikeRequest>,
 ) -> Json<ApiResponse<bool>> {
-    tracing::info!("Toggling like for post: {} by user: {}", post_id, request.user_id);
+    tracing::info!(
+        "Toggling like for post: {} by user: {}",
+        post_id,
+        request.user_id
+    );
 
     match app_state.db.like_post(&post_id, &request.user_id).await {
         Ok(is_liked) => {
-            tracing::info!("Like toggled successfully: post={}, is_liked={}", post_id, is_liked);
+            tracing::info!(
+                "Like toggled successfully: post={}, is_liked={}",
+                post_id,
+                is_liked
+            );
             Json(ApiResponse::success(is_liked))
         }
         Err(e) => {
             tracing::error!("Failed to toggle like: {}", e);
             Json(ApiResponse::error("Failed to like post".to_string()))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CommentQuery {
+    pub limit: Option<i32>,
+    pub offset: Option<i32>,
+}
+
+pub async fn get_post_comments(
+    State(app_state): State<AppState>,
+    Path(post_id): Path<String>,
+    Query(params): Query<CommentQuery>,
+) -> Json<ApiResponse<Vec<CommentWithAuthor>>> {
+    tracing::info!("Fetching comments for post: {}", post_id);
+
+    if Uuid::parse_str(&post_id).is_err() {
+        return Json(ApiResponse::error("Invalid post id".to_string()));
+    }
+
+    match app_state
+        .db
+        .get_comments_for_post(&post_id, params.limit, params.offset)
+        .await
+    {
+        Ok(comments) => Json(ApiResponse::success(comments)),
+        Err(e) => {
+            tracing::error!("Failed to fetch comments: {}", e);
+            Json(ApiResponse::error("Failed to fetch comments".to_string()))
+        }
+    }
+}
+
+pub async fn create_comment(
+    State(app_state): State<AppState>,
+    Path(post_id): Path<String>,
+    Json(request): Json<CreateCommentRequest>,
+) -> Json<ApiResponse<CommentWithAuthor>> {
+    if request.content.trim().is_empty() {
+        return Json(ApiResponse::error("Comment cannot be empty".to_string()));
+    }
+
+    if Uuid::parse_str(&post_id).is_err() {
+        return Json(ApiResponse::error("Invalid post id".to_string()));
+    }
+
+    let commenter_id = match Uuid::parse_str(&request.user_id) {
+        Ok(id) => id,
+        Err(_) => return Json(ApiResponse::error("Invalid user id".to_string())),
+    };
+
+    let parent_comment_id = match request.parent_comment_id.as_deref() {
+        Some(parent) => match Uuid::parse_str(parent) {
+            Ok(id) => Some(id),
+            Err(_) => return Json(ApiResponse::error("Invalid parent comment id".to_string())),
+        },
+        None => None,
+    };
+
+    let reply_to_user_id = match request.reply_to_user_id.as_deref() {
+        Some(target_user_id) => match Uuid::parse_str(target_user_id) {
+            Ok(id) => Some(id),
+            Err(_) => return Json(ApiResponse::error("Invalid reply_to_user_id".to_string())),
+        },
+        None => None,
+    };
+
+    if let Some(parent_id) = parent_comment_id {
+        match app_state
+            .db
+            .get_comment_author_and_post(&parent_id.to_string())
+            .await
+        {
+            Ok(Some((_author_id, parent_post_id))) => {
+                if parent_post_id != post_id {
+                    return Json(ApiResponse::error(
+                        "Parent comment does not belong to this post".to_string(),
+                    ));
+                }
+            }
+            Ok(None) => return Json(ApiResponse::error("Parent comment not found".to_string())),
+            Err(e) => {
+                tracing::error!("Failed to validate parent comment: {}", e);
+                return Json(ApiResponse::error("Failed to create comment".to_string()));
+            }
+        }
+    }
+
+    let user = match app_state.db.get_user_by_id(&request.user_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return Json(ApiResponse::error("User not found".to_string())),
+        Err(e) => {
+            tracing::error!("Failed to get user: {}", e);
+            return Json(ApiResponse::error("Failed to create comment".to_string()));
+        }
+    };
+
+    let comment = match app_state
+        .db
+        .create_comment(
+            &post_id,
+            &request.user_id,
+            request.content.trim(),
+            request.parent_comment_id.as_deref(),
+        )
+        .await
+    {
+        Ok(comment) => comment,
+        Err(e) => {
+            tracing::error!("Failed to create comment: {}", e);
+            return Json(ApiResponse::error("Failed to create comment".to_string()));
+        }
+    };
+
+    // Collect recipients to avoid duplicate notifications.
+    let mut recipients: HashSet<String> = HashSet::new();
+    let mut reply_recipients: HashSet<String> = HashSet::new();
+
+    if let Ok(Some(author_id)) = app_state.db.get_post_author_id(&post_id).await {
+        if author_id != request.user_id {
+            recipients.insert(author_id);
+        }
+    }
+
+    if let Some(parent_id) = request.parent_comment_id.as_deref() {
+        if let Ok(Some((parent_author_id, _parent_post_id))) =
+            app_state.db.get_comment_author_and_post(parent_id).await
+        {
+            if parent_author_id != request.user_id {
+                recipients.insert(parent_author_id.clone());
+                reply_recipients.insert(parent_author_id);
+            }
+        }
+    }
+
+    if let Some(target_uuid) = reply_to_user_id {
+        let target_id = target_uuid.to_string();
+        if target_id != request.user_id {
+            recipients.insert(target_id.clone());
+            reply_recipients.insert(target_id);
+        }
+    }
+
+    for recipient in &recipients {
+        let (message, notification_type) = if reply_recipients.contains(recipient) {
+            (
+                format!("@{} replied to your comment", user.username),
+                "reply",
+            )
+        } else {
+            (
+                format!("@{} commented on your post", user.username),
+                "comment",
+            )
+        };
+        if let Err(e) = app_state
+            .db
+            .create_notification(
+                recipient,
+                &message,
+                notification_type,
+                Some(&post_id),
+                Some(request.content.trim()),
+                Some(&request.user_id),
+            )
+            .await
+        {
+            tracing::error!("Failed to create notification: {}", e);
+        } else {
+            app_state.notification_notify.notify_one();
+        }
+    }
+
+    let comment_with_author = CommentWithAuthor {
+        comment,
+        author: UserProfile {
+            id: commenter_id,
+            username: user.username,
+            avatar_url: user.avatar_url,
+            token_symbol: user.token_symbol,
+            wallet_address: user.wallet_address,
+            bio: user.bio,
+            followers_count: Some(user.followers_count),
+        },
+    };
+
+    Json(ApiResponse::success(comment_with_author))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{database::Database, sui_verification::SuiVerification, AppState};
+    use dashmap::DashMap;
+    use tokio::sync::Notify;
+
+    async fn test_state() -> AppState {
+        let db = Database::with_url("sqlite::memory:").await.expect("db");
+        AppState {
+            db: std::sync::Arc::new(db),
+            sui_verification: std::sync::Arc::new(SuiVerification::new()),
+            r2_client: None,
+            r2_error: None,
+            notification_sessions: std::sync::Arc::new(DashMap::new()),
+            notification_notify: std::sync::Arc::new(Notify::new()),
+        }
+    }
+
+    async fn create_user(app_state: &AppState, username: &str) -> User {
+        let request = CreateUserRequest {
+            wallet_address: None,
+            email: None,
+            username: username.to_string(),
+            bio: None,
+            avatar_url: None,
+        };
+        app_state
+            .db
+            .create_user(request)
+            .await
+            .expect("create user")
+    }
+
+    async fn create_post_for_user(app_state: &AppState, user: &User, content: &str) -> Post {
+        let request = CreatePostRequest {
+            author_id: user.id.to_string(),
+            wallet_address: "0x1".to_string(),
+            content: content.to_string(),
+            media_urls: None,
+            protocol_content: None,
+        };
+        app_state
+            .db
+            .create_post(request, None, None)
+            .await
+            .expect("create post")
+    }
+
+    #[tokio::test]
+    async fn comment_creates_notification_for_post_author() {
+        let app_state = test_state().await;
+
+        let author = create_user(&app_state, "author").await;
+        let commenter = create_user(&app_state, "commenter").await;
+        let post = create_post_for_user(&app_state, &author, "hello").await;
+
+        let response = create_comment(
+            State(app_state.clone()),
+            Path(post.id.to_string()),
+            Json(CreateCommentRequest {
+                user_id: commenter.id.to_string(),
+                content: "nice post".to_string(),
+                parent_comment_id: None,
+                reply_to_user_id: None,
+            }),
+        )
+        .await;
+
+        assert!(response.0.success);
+
+        let notifications = app_state
+            .db
+            .fetch_notifications_by_user(&author.id.to_string())
+            .await
+            .expect("fetch notifications");
+        assert!(!notifications.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reply_to_comment_notifies_parent_author() {
+        let app_state = test_state().await;
+
+        let author = create_user(&app_state, "author2").await;
+        let commenter = create_user(&app_state, "commenter2").await;
+        let post = create_post_for_user(&app_state, &author, "post").await;
+
+        let parent = create_comment(
+            State(app_state.clone()),
+            Path(post.id.to_string()),
+            Json(CreateCommentRequest {
+                user_id: commenter.id.to_string(),
+                content: "first".to_string(),
+                parent_comment_id: None,
+                reply_to_user_id: None,
+            }),
+        )
+        .await;
+
+        let parent_comment_id = parent
+            .0
+            .data
+            .as_ref()
+            .expect("parent comment")
+            .comment
+            .id
+            .to_string();
+
+        let response = create_comment(
+            State(app_state.clone()),
+            Path(post.id.to_string()),
+            Json(CreateCommentRequest {
+                user_id: author.id.to_string(),
+                content: "reply".to_string(),
+                parent_comment_id: Some(parent_comment_id),
+                reply_to_user_id: None,
+            }),
+        )
+        .await;
+
+        assert!(response.0.success);
+
+        let notifications = app_state
+            .db
+            .fetch_notifications_by_user(&commenter.id.to_string())
+            .await
+            .expect("fetch notifications");
+        assert!(!notifications.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_notifications_by_user_returns_comment_notifications() {
+        let app_state = test_state().await;
+
+        let author = create_user(&app_state, "author3").await;
+        let commenter = create_user(&app_state, "commenter3").await;
+        let post = create_post_for_user(&app_state, &author, "hello").await;
+
+        let _ = create_comment(
+            State(app_state.clone()),
+            Path(post.id.to_string()),
+            Json(CreateCommentRequest {
+                user_id: commenter.id.to_string(),
+                content: "nice post".to_string(),
+                parent_comment_id: None,
+                reply_to_user_id: None,
+            }),
+        )
+        .await;
+
+        let response =
+            get_notifications_by_user(State(app_state.clone()), Path(author.id.to_string())).await;
+
+        assert!(response.0.success);
+        let notifications = response.0.data.expect("notifications payload");
+        assert!(!notifications.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reply_to_reply_notifies_target_user_when_reply_to_user_id_is_set() {
+        let app_state = test_state().await;
+
+        let post_author = create_user(&app_state, "post_author").await;
+        let top_comment_author = create_user(&app_state, "top_commenter").await;
+        let reply_author = create_user(&app_state, "reply_author").await;
+        let replier = create_user(&app_state, "replier").await;
+        let post = create_post_for_user(&app_state, &post_author, "post").await;
+
+        let top_level = create_comment(
+            State(app_state.clone()),
+            Path(post.id.to_string()),
+            Json(CreateCommentRequest {
+                user_id: top_comment_author.id.to_string(),
+                content: "top-level".to_string(),
+                parent_comment_id: None,
+                reply_to_user_id: None,
+            }),
+        )
+        .await;
+
+        let top_level_comment_id = top_level
+            .0
+            .data
+            .as_ref()
+            .expect("top-level comment")
+            .comment
+            .id
+            .to_string();
+
+        let _reply = create_comment(
+            State(app_state.clone()),
+            Path(post.id.to_string()),
+            Json(CreateCommentRequest {
+                user_id: reply_author.id.to_string(),
+                content: "first reply".to_string(),
+                parent_comment_id: Some(top_level_comment_id.clone()),
+                reply_to_user_id: Some(top_comment_author.id.to_string()),
+            }),
+        )
+        .await;
+
+        let response = create_comment(
+            State(app_state.clone()),
+            Path(post.id.to_string()),
+            Json(CreateCommentRequest {
+                user_id: replier.id.to_string(),
+                content: "reply to reply".to_string(),
+                parent_comment_id: Some(top_level_comment_id),
+                reply_to_user_id: Some(reply_author.id.to_string()),
+            }),
+        )
+        .await;
+
+        assert!(response.0.success);
+
+        let target_notifications = app_state
+            .db
+            .fetch_notifications_by_user(&reply_author.id.to_string())
+            .await
+            .expect("fetch reply author notifications");
+        assert!(!target_notifications.is_empty());
+    }
+}
+
+#[derive(Deserialize)]
+pub struct DeletePostRequest {
+    pub user_id: uuid::Uuid,
+}
+
+pub async fn delete_post(
+    State(app_state): State<AppState>,
+    Path(post_id): Path<String>,
+    Json(request): Json<DeletePostRequest>,
+) -> Json<ApiResponse<bool>> {
+    tracing::info!(
+        "Delete post request: post_id={}, user_id={}",
+        post_id,
+        request.user_id
+    );
+
+    match app_state
+        .db
+        .delete_post(&post_id, &request.user_id.to_string())
+        .await
+    {
+        Ok(true) => {
+            tracing::info!("Post deleted successfully: {}", post_id);
+            Json(ApiResponse::success(true))
+        }
+        Ok(false) => {
+            tracing::warn!("Delete denied or post not found: {}", post_id);
+            Json(ApiResponse::error(
+                "Post not found or not owned by user".to_string(),
+            ))
+        }
+        Err(e) => {
+            tracing::error!("Failed to delete post: {}", e);
+            Json(ApiResponse::error("Failed to delete post".to_string()))
         }
     }
 }
@@ -603,7 +1621,11 @@ pub async fn verify_post_hash(
     State(app_state): State<AppState>,
     Json(request): Json<VerifyPostHashRequest>,
 ) -> Json<ApiResponse<VerifyPostHashResponse>> {
-    tracing::info!("Verifying post hash: post_id={}, hash={}", request.post_id, request.content_hash);
+    tracing::info!(
+        "Verifying post hash: post_id={}, hash={}",
+        request.post_id,
+        request.content_hash
+    );
 
     // Get the post with author info
     let post_with_author = match app_state.db.get_post_with_author(&request.post_id).await {
@@ -622,21 +1644,33 @@ pub async fn verify_post_hash(
     let wallet_address = match app_state.db.get_post_author_wallet(&request.post_id).await {
         Ok(Some(addr)) => addr,
         Ok(None) => {
-            tracing::warn!("Author wallet address not found for post: {}", request.post_id);
-            return Json(ApiResponse::error("Author wallet address not found".to_string()));
+            tracing::warn!(
+                "Author wallet address not found for post: {}",
+                request.post_id
+            );
+            return Json(ApiResponse::error(
+                "Author wallet address not found".to_string(),
+            ));
         }
         Err(e) => {
             tracing::error!("Failed to get author wallet: {}", e);
-            return Json(ApiResponse::error("Failed to retrieve author wallet".to_string()));
+            return Json(ApiResponse::error(
+                "Failed to retrieve author wallet".to_string(),
+            ));
         }
     };
 
     // Check if post has stored hash info
-    let (stored_hash, timestamp_ms) = match (&post_with_author.post.content_hash, post_with_author.post.hash_timestamp_ms) {
+    let (stored_hash, timestamp_ms) = match (
+        &post_with_author.post.content_hash,
+        post_with_author.post.hash_timestamp_ms,
+    ) {
         (Some(h), Some(t)) => (h.clone(), t),
         _ => {
             tracing::warn!("Post has no hash info: {}", request.post_id);
-            return Json(ApiResponse::error("Post has no hash info (created before hash feature)".to_string()));
+            return Json(ApiResponse::error(
+                "Post has no hash info (created before hash feature)".to_string(),
+            ));
         }
     };
 
@@ -650,7 +1684,10 @@ pub async fn verify_post_hash(
         Ok(v) => v,
         Err(e) => {
             tracing::error!("Hash verification error: {}", e);
-            return Json(ApiResponse::error(format!("Hash verification error: {}", e)));
+            return Json(ApiResponse::error(format!(
+                "Hash verification error: {}",
+                e
+            )));
         }
     };
 
@@ -658,7 +1695,11 @@ pub async fn verify_post_hash(
     let matches_stored = request.content_hash == stored_hash;
 
     if valid != matches_stored {
-        tracing::warn!("Hash verification inconsistency: computed={}, matches_stored={}", valid, matches_stored);
+        tracing::warn!(
+            "Hash verification inconsistency: computed={}, matches_stored={}",
+            valid,
+            matches_stored
+        );
     }
 
     let content_preview = if post_with_author.post.content.len() > 100 {
@@ -699,7 +1740,11 @@ pub async fn follow_user(
 ) -> Result<Json<ApiResponse<FollowStatusResponse>>, StatusCode> {
     tracing::info!("Follow request: {} -> {}", request.follower_id, user_id);
 
-    match app_state.db.follow_user(&request.follower_id, &user_id).await {
+    match app_state
+        .db
+        .follow_user(&request.follower_id, &user_id)
+        .await
+    {
         Ok(_followed) => {
             let (followers_count, _) = app_state.db.get_follow_counts(&user_id).await;
             let (_, following_count) = app_state.db.get_follow_counts(&request.follower_id).await;
@@ -725,7 +1770,11 @@ pub async fn unfollow_user(
 ) -> Result<Json<ApiResponse<FollowStatusResponse>>, StatusCode> {
     tracing::info!("Unfollow request: {} -> {}", request.follower_id, user_id);
 
-    match app_state.db.unfollow_user(&request.follower_id, &user_id).await {
+    match app_state
+        .db
+        .unfollow_user(&request.follower_id, &user_id)
+        .await
+    {
         Ok(_unfollowed) => {
             let (followers_count, _) = app_state.db.get_follow_counts(&user_id).await;
             let (_, following_count) = app_state.db.get_follow_counts(&request.follower_id).await;
@@ -750,7 +1799,8 @@ pub async fn get_follow_status(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<ApiResponse<FollowStatusResponse>>, StatusCode> {
     let follower_id_str = params.get("follower_id").ok_or(StatusCode::BAD_REQUEST)?;
-    let follower_id = uuid::Uuid::parse_str(follower_id_str).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let follower_id =
+        uuid::Uuid::parse_str(follower_id_str).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let is_following = app_state.db.is_following(&follower_id, &user_id).await;
     let (followers_count, _) = app_state.db.get_follow_counts(&user_id).await;
@@ -777,7 +1827,10 @@ fn api_error<T>(status: StatusCode, message: &str) -> (StatusCode, Json<ApiRespo
 pub async fn upload_media(
     State(app_state): State<AppState>,
     mut multipart: Multipart,
-) -> Result<Json<ApiResponse<MediaUploadResponse>>, (StatusCode, Json<ApiResponse<MediaUploadResponse>>)> {
+) -> Result<
+    Json<ApiResponse<MediaUploadResponse>>,
+    (StatusCode, Json<ApiResponse<MediaUploadResponse>>),
+> {
     tracing::info!("📤 Media upload request received");
 
     // Check if R2 is configured
@@ -792,7 +1845,10 @@ pub async fn upload_media(
                 ));
             }
             tracing::error!("R2 client not configured (no details)");
-            return Err(api_error(StatusCode::SERVICE_UNAVAILABLE, "R2 client not configured"));
+            return Err(api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "R2 client not configured",
+            ));
         }
     };
 
@@ -809,9 +1865,7 @@ pub async fn upload_media(
 
         match field_name.as_str() {
             "file" => {
-                content_type = field
-                    .content_type()
-                    .map(|ct| ct.to_string());
+                content_type = field.content_type().map(|ct| ct.to_string());
 
                 let data = field.bytes().await.map_err(|e| {
                     tracing::error!("Failed to read file data: {}", e);
@@ -864,7 +1918,11 @@ pub async fn upload_media(
     };
 
     if file_data.len() > max_size {
-        tracing::warn!("File too large: {} bytes (max: {} bytes)", file_data.len(), max_size);
+        tracing::warn!(
+            "File too large: {} bytes (max: {} bytes)",
+            file_data.len(),
+            max_size
+        );
         return Err(api_error(StatusCode::PAYLOAD_TOO_LARGE, "File too large"));
     }
 
@@ -876,7 +1934,10 @@ pub async fn upload_media(
     );
 
     // Upload to R2
-    match r2_client.upload_file(file_data.clone(), &content_type, &user_id).await {
+    match r2_client
+        .upload_file(file_data.clone(), &content_type, &user_id)
+        .await
+    {
         Ok((file_key, public_url, checksum)) => {
             let response = MediaUploadResponse {
                 file_key,
@@ -903,7 +1964,10 @@ pub async fn upload_media(
 pub async fn batch_upload_media(
     State(app_state): State<AppState>,
     mut multipart: Multipart,
-) -> Result<Json<ApiResponse<Vec<MediaUploadResponse>>>, (StatusCode, Json<ApiResponse<Vec<MediaUploadResponse>>>)> {
+) -> Result<
+    Json<ApiResponse<Vec<MediaUploadResponse>>>,
+    (StatusCode, Json<ApiResponse<Vec<MediaUploadResponse>>>),
+> {
     tracing::info!("📤 Batch media upload request received");
     tracing::info!("Parsing multipart fields...");
 
@@ -963,7 +2027,11 @@ pub async fn batch_upload_media(
             };
 
             if data.len() > max_size {
-                tracing::warn!("File too large in batch: {} bytes (max: {} bytes)", data.len(), max_size);
+                tracing::warn!(
+                    "File too large in batch: {} bytes (max: {} bytes)",
+                    data.len(),
+                    max_size
+                );
                 return Err(api_error(StatusCode::PAYLOAD_TOO_LARGE, "File too large"));
             }
 
@@ -979,18 +2047,27 @@ pub async fn batch_upload_media(
 
     let user_id = user_id.ok_or_else(|| {
         tracing::error!("No user_id in batch upload request");
-        api_error(StatusCode::BAD_REQUEST, "No user_id in batch upload request")
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "No user_id in batch upload request",
+        )
     })?;
 
     // Validate batch
     if files.is_empty() {
         tracing::warn!("No files found in batch upload request");
-        return Err(api_error(StatusCode::BAD_REQUEST, "No files in upload request"));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "No files in upload request",
+        ));
     }
 
     if files.len() > 9 {
         tracing::warn!("Too many files in batch: {} (max: 9)", files.len());
-        return Err(api_error(StatusCode::BAD_REQUEST, "Too many files in upload"));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "Too many files in upload",
+        ));
     }
 
     let total_size: usize = files.iter().map(|(data, _)| data.len()).sum();
@@ -999,8 +2076,12 @@ pub async fn batch_upload_media(
         return Err(api_error(StatusCode::PAYLOAD_TOO_LARGE, "Batch too large"));
     }
 
-    tracing::info!("Batch upload: {} files, total size: {} bytes, user: {}",
-        files.len(), total_size, user_id);
+    tracing::info!(
+        "Batch upload: {} files, total size: {} bytes, user: {}",
+        files.len(),
+        total_size,
+        user_id
+    );
 
     // Upload all files
     let mut results: Vec<MediaUploadResponse> = Vec::new();
@@ -1008,7 +2089,10 @@ pub async fn batch_upload_media(
     for (index, (data, content_type)) in files.into_iter().enumerate() {
         tracing::info!("Uploading file {}/{}", index + 1, results.len() + 1);
 
-        match r2_client.upload_file(data.clone(), &content_type, &user_id).await {
+        match r2_client
+            .upload_file(data.clone(), &content_type, &user_id)
+            .await
+        {
             Ok((file_key, public_url, checksum)) => {
                 let response = MediaUploadResponse {
                     file_key,

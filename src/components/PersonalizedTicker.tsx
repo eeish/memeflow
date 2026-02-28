@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from './ui-simple/Avatar';
-import { TrendingUp, TrendingDown, Sparkles, Flame, Star } from './ui-simple/Icons';
+import { TrendingUp, TrendingDown, Sparkles, Flame, Star, Crown } from './ui-simple/Icons';
 
 interface TickerItem {
   id: string;
   username: string;
-  displayName?: string;
   avatar?: string;
   tokenSymbol: string;
   currentPrice: number;
@@ -15,6 +14,7 @@ interface TickerItem {
   holders: number;
   isHot?: boolean;
   isNew?: boolean;
+  isGraduated?: boolean;
 }
 
 interface PersonalizedTickerProps {
@@ -26,24 +26,23 @@ interface PersonalizedTickerProps {
 // Mock data generator for demonstration
 const generateMockTickerData = (): TickerItem[] => {
   const names = [
-    { username: 'moonshot', displayName: 'MoonShot King', avatar: '🚀' },
-    { username: 'diamondhands', displayName: 'Diamond Hands', avatar: '💎' },
-    { username: 'whaleking', displayName: 'Whale King', avatar: '🐋' },
-    { username: 'memegod', displayName: 'Meme God', avatar: '👑' },
-    { username: 'rocketman', displayName: 'Rocket Man', avatar: '🎯' },
-    { username: 'cryptoqueen', displayName: 'Crypto Queen', avatar: '👸' },
-    { username: 'hodler', displayName: 'HODL Master', avatar: '🔒' },
-    { username: 'degenape', displayName: 'Degen Ape', avatar: '🦍' },
-    { username: 'moonfairy', displayName: 'Moon Fairy', avatar: '🧚' },
-    { username: 'satoshi', displayName: 'Baby Satoshi', avatar: '₿' },
-    { username: 'pepeking', displayName: 'Pepe King', avatar: '🐸' },
-    { username: 'shibmaster', displayName: 'Shib Master', avatar: '🐕' }
+    { username: 'moonshot', avatar: '🚀' },
+    { username: 'diamondhands', avatar: '💎' },
+    { username: 'whaleking', avatar: '🐋' },
+    { username: 'memegod', avatar: '👑' },
+    { username: 'rocketman', avatar: '🎯' },
+    { username: 'cryptoqueen', avatar: '👸' },
+    { username: 'hodler', avatar: '🔒' },
+    { username: 'degenape', avatar: '🦍' },
+    { username: 'moonfairy', avatar: '🧚' },
+    { username: 'satoshi', avatar: '₿' },
+    { username: 'pepeking', avatar: '🐸' },
+    { username: 'shibmaster', avatar: '🐕' }
   ];
 
   return names.map((user, index) => ({
     id: `user-${index}`,
     username: user.username,
-    displayName: user.displayName,
     avatar: undefined, // Will use emoji fallback
     tokenSymbol: user.username.toUpperCase().slice(0, 4),
     currentPrice: Math.random() * 10 + 0.001,
@@ -52,7 +51,8 @@ const generateMockTickerData = (): TickerItem[] => {
     volume24h: Math.random() * 100000,
     holders: Math.floor(Math.random() * 5000) + 100,
     isHot: Math.random() > 0.7,
-    isNew: Math.random() > 0.8
+    isNew: Math.random() > 0.8,
+    isGraduated: Math.random() > 0.7,
   }));
 };
 
@@ -187,6 +187,9 @@ export const PersonalizedTicker: React.FC<PersonalizedTickerProps> = ({
                   <span className="text-gray-800 font-semibold text-sm">
                     @{item.username}
                   </span>
+                  {item.isGraduated && (
+                    <Crown className="w-3 h-3 text-purple-500 flex-shrink-0" />
+                  )}
                   <span className="text-purple-600 text-xs font-medium">
                     ${item.tokenSymbol}
                   </span>

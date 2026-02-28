@@ -1,3 +1,4 @@
+use once_cell::sync::Lazy;
 /// Phase 1 Username Validation Module
 ///
 /// Rules:
@@ -8,41 +9,135 @@
 /// - No consecutive hyphens (--)
 /// - Cannot be digits-only; must contain at least one letter
 /// - Reserved words are blocked
-
 use std::collections::HashSet;
-use once_cell::sync::Lazy;
 
 /// Reserved usernames that cannot be used
 static RESERVED_USERNAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
         // System/admin
-        "admin", "administrator", "root", "system", "mod", "moderator",
-        "support", "help", "info", "contact", "team", "staff",
+        "admin",
+        "administrator",
+        "root",
+        "system",
+        "mod",
+        "moderator",
+        "support",
+        "help",
+        "info",
+        "contact",
+        "team",
+        "staff",
         // API/technical
-        "api", "app", "www", "mail", "email", "ftp", "ssh", "ssl",
-        "cdn", "static", "assets", "media", "upload", "uploads",
-        "download", "downloads", "file", "files",
+        "api",
+        "app",
+        "www",
+        "mail",
+        "email",
+        "ftp",
+        "ssh",
+        "ssl",
+        "cdn",
+        "static",
+        "assets",
+        "media",
+        "upload",
+        "uploads",
+        "download",
+        "downloads",
+        "file",
+        "files",
         // Actions
-        "create", "mint", "delete", "edit", "update", "remove",
-        "login", "logout", "signin", "signout", "signup", "register",
-        "settings", "config", "configure", "preferences",
+        "create",
+        "mint",
+        "delete",
+        "edit",
+        "update",
+        "remove",
+        "login",
+        "logout",
+        "signin",
+        "signout",
+        "signup",
+        "register",
+        "settings",
+        "config",
+        "configure",
+        "preferences",
         // Platform features
-        "feed", "plaza", "explore", "search", "discover", "trending",
-        "notifications", "messages", "dm", "dms", "chat",
-        "profile", "profiles", "user", "users", "account", "accounts",
-        "wallet", "wallets", "token", "tokens", "share", "shares",
-        "post", "posts", "comment", "comments", "like", "likes",
-        "follow", "following", "followers", "unfollow",
+        "feed",
+        "plaza",
+        "explore",
+        "search",
+        "discover",
+        "trending",
+        "notifications",
+        "messages",
+        "dm",
+        "dms",
+        "chat",
+        "profile",
+        "profiles",
+        "user",
+        "users",
+        "account",
+        "accounts",
+        "wallet",
+        "wallets",
+        "token",
+        "tokens",
+        "share",
+        "shares",
+        "post",
+        "posts",
+        "comment",
+        "comments",
+        "like",
+        "likes",
+        "follow",
+        "following",
+        "followers",
+        "unfollow",
         // Financial
-        "buy", "sell", "trade", "trading", "swap", "exchange",
-        "price", "market", "markets", "order", "orders",
-        "deposit", "withdraw", "transfer", "send", "receive",
+        "buy",
+        "sell",
+        "trade",
+        "trading",
+        "swap",
+        "exchange",
+        "price",
+        "market",
+        "markets",
+        "order",
+        "orders",
+        "deposit",
+        "withdraw",
+        "transfer",
+        "send",
+        "receive",
         // Common reserved
-        "null", "undefined", "none", "void", "test", "testing",
-        "demo", "example", "sample", "default", "official",
-        "verified", "anonymous", "unknown", "private", "public",
+        "null",
+        "undefined",
+        "none",
+        "void",
+        "test",
+        "testing",
+        "demo",
+        "example",
+        "sample",
+        "default",
+        "official",
+        "verified",
+        "anonymous",
+        "unknown",
+        "private",
+        "public",
         // Brand protection
-        "cord", "sui", "suinetwork", "mysten", "anthropic", "claude",
+        "cord",
+        "sui",
+        "suinetwork",
+        "mysten",
+        "anthropic",
+        "claude",
     ]
     .into_iter()
     .collect()
@@ -122,7 +217,10 @@ pub fn validate_username(username: &str) -> Result<String, UsernameValidationErr
     }
 
     // Check for valid characters (a-z, 0-9, -)
-    if !normalized.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+    if !normalized
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
         return Err(UsernameValidationError::InvalidCharacters);
     }
 
@@ -171,44 +269,95 @@ mod tests {
 
     #[test]
     fn test_length_validation() {
-        assert_eq!(validate_username("ab"), Err(UsernameValidationError::TooShort));
-        assert_eq!(validate_username("a"), Err(UsernameValidationError::TooShort));
-        assert_eq!(validate_username(""), Err(UsernameValidationError::TooShort));
+        assert_eq!(
+            validate_username("ab"),
+            Err(UsernameValidationError::TooShort)
+        );
+        assert_eq!(
+            validate_username("a"),
+            Err(UsernameValidationError::TooShort)
+        );
+        assert_eq!(
+            validate_username(""),
+            Err(UsernameValidationError::TooShort)
+        );
         assert!(validate_username("abc").is_ok());
         assert!(validate_username("fifteencharacte").is_ok()); // 15 chars
-        assert_eq!(validate_username("sixteencharacter"), Err(UsernameValidationError::TooLong));
+        assert_eq!(
+            validate_username("sixteencharacter"),
+            Err(UsernameValidationError::TooLong)
+        );
     }
 
     #[test]
     fn test_invalid_characters() {
-        assert_eq!(validate_username("user@name"), Err(UsernameValidationError::InvalidCharacters));
-        assert_eq!(validate_username("user.name"), Err(UsernameValidationError::InvalidCharacters));
-        assert_eq!(validate_username("user_name"), Err(UsernameValidationError::InvalidCharacters));
-        assert_eq!(validate_username("user name"), Err(UsernameValidationError::InvalidCharacters));
+        assert_eq!(
+            validate_username("user@name"),
+            Err(UsernameValidationError::InvalidCharacters)
+        );
+        assert_eq!(
+            validate_username("user.name"),
+            Err(UsernameValidationError::InvalidCharacters)
+        );
+        assert_eq!(
+            validate_username("user_name"),
+            Err(UsernameValidationError::InvalidCharacters)
+        );
+        assert_eq!(
+            validate_username("user name"),
+            Err(UsernameValidationError::InvalidCharacters)
+        );
     }
 
     #[test]
     fn test_hyphen_rules() {
-        assert_eq!(validate_username("-user"), Err(UsernameValidationError::StartsWithHyphen));
-        assert_eq!(validate_username("user-"), Err(UsernameValidationError::EndsWithHyphen));
-        assert_eq!(validate_username("user--name"), Err(UsernameValidationError::ConsecutiveHyphens));
+        assert_eq!(
+            validate_username("-user"),
+            Err(UsernameValidationError::StartsWithHyphen)
+        );
+        assert_eq!(
+            validate_username("user-"),
+            Err(UsernameValidationError::EndsWithHyphen)
+        );
+        assert_eq!(
+            validate_username("user--name"),
+            Err(UsernameValidationError::ConsecutiveHyphens)
+        );
         assert!(validate_username("user-name").is_ok());
     }
 
     #[test]
     fn test_digits_only() {
-        assert_eq!(validate_username("123"), Err(UsernameValidationError::DigitsOnly));
-        assert_eq!(validate_username("12345"), Err(UsernameValidationError::DigitsOnly));
+        assert_eq!(
+            validate_username("123"),
+            Err(UsernameValidationError::DigitsOnly)
+        );
+        assert_eq!(
+            validate_username("12345"),
+            Err(UsernameValidationError::DigitsOnly)
+        );
         assert!(validate_username("a123").is_ok());
         assert!(validate_username("123a").is_ok());
     }
 
     #[test]
     fn test_reserved_words() {
-        assert_eq!(validate_username("admin"), Err(UsernameValidationError::Reserved));
-        assert_eq!(validate_username("ADMIN"), Err(UsernameValidationError::Reserved));
-        assert_eq!(validate_username("support"), Err(UsernameValidationError::Reserved));
-        assert_eq!(validate_username("api"), Err(UsernameValidationError::Reserved));
+        assert_eq!(
+            validate_username("admin"),
+            Err(UsernameValidationError::Reserved)
+        );
+        assert_eq!(
+            validate_username("ADMIN"),
+            Err(UsernameValidationError::Reserved)
+        );
+        assert_eq!(
+            validate_username("support"),
+            Err(UsernameValidationError::Reserved)
+        );
+        assert_eq!(
+            validate_username("api"),
+            Err(UsernameValidationError::Reserved)
+        );
     }
 
     #[test]

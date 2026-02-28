@@ -1,10 +1,15 @@
 import React, { useEffect, useMemo, useState, useLayoutEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { apiService, type User } from '../../lib/api';
-import { calculatePriceMist, formatMistToSui, useSocialFollow } from '../../hooks/useSocialFollow';
+import { useShareMarket, calculatePriceMist, formatMistToSui } from '../../hooks/useShareMarket';
+import { useGraduation } from '../../hooks/useGraduation';
+import { GRADUATION_THRESHOLD, MAX_SUPPLY, graduationProgressPercent } from '../../lib/graduation';
 import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useNotifications } from '../../contexts/NotificationContext';
 import { UserPlus, UserMinus, ShoppingCart, Loader2 } from '../ui-simple/Icons';
+import { BuyShareDialog } from '../BuyShareDialog';
 import type { FeedAuthor, FeedTone } from './types';
+import type { TradePageContext } from '../../types/trade';
 
 interface HoverProfileCardProps {
   author: FeedAuthor;
@@ -15,6 +20,7 @@ interface HoverProfileCardProps {
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
   onBuyClick?: (author: FeedAuthor) => void;
+  onOpenTrade?: (market: TradePageContext) => void;
 }
 
 // Shorten wallet address: 0x1234...abcd
@@ -90,9 +96,11 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
   onMouseEnter,
   onMouseLeave,
   onBuyClick,
+  onOpenTrade,
 }) => {
   const account = useCurrentAccount();
-  const { isFollowing: checkIsFollowing, followUser, unfollowUser, userProfile, loading: followLoading } = useSocialFollow();
+  const { findMarketByOwner, buyShare, checkHolderStatus, loading: shareLoading } = useShareMarket();
+  const { success: showSuccess, error: showError } = useNotifications();
 
   const [profile, setProfile] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
@@ -100,6 +108,19 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
   const [isFollowing, setIsFollowing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
+
+  // Market info state
+  const [marketInfo, setMarketInfo] = useState<{ objectId: string; holders: number; graduated: boolean } | null>(null);
+  const [marketInfoLoading, setMarketInfoLoading] = useState(false);
+  const [marketInfoFetched, setMarketInfoFetched] = useState(false);
+
+  // Buy share dialog state
+  const [buyDialogOpen, setBuyDialogOpen] = useState(false);
+  const [isPurchasing, setIsPurchasing] = useState(false);
+  const [purchaseError, setPurchaseError] = useState<string | null>(null);
+  const [purchaseSuccessful, setPurchaseSuccessful] = useState(false);
+  const [purchaseTxDigest, setPurchaseTxDigest] = useState<string | undefined>(undefined);
+  const [isHolder, setIsHolder] = useState(false);
 
   // Reset profile when author changes
   useEffect(() => {
@@ -132,17 +153,11 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
     };
   }, [author.id, isOpen, loading, profile]);
 
-  // Check follow status
-  useEffect(() => {
-    if (author.id) {
-      setIsFollowing(checkIsFollowing(author.id));
-    }
-  }, [author.id, checkIsFollowing]);
-
   // Merge author props with fetched profile data
-  const displayName = profile?.display_name || author.displayName;
   const username = profile?.username || author.username;
+  const displayName = username;
   const avatarUrl = profile?.avatar_url || author.avatarUrl;
+  const tokenSymbol = (firstNonEmpty(profile?.token_symbol, author.tokenSymbol, username)?.replace('$', '').toUpperCase()) || 'TOKEN';
   const rawBio = firstNonEmpty(profile?.bio, author.bio);
   const bio = rawBio || null;
   const walletAddress = firstNonEmpty(
@@ -153,13 +168,64 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
     looksLikeSuiAddress(author.id) ? author.id : null
   );
 
-  // Use holdersCount (contract terminology) - fallback to followersCount for compatibility
-  const holdersCount =
+  // Graduation state
+  const { graduationState } = useGraduation(walletAddress);
+  const phase = graduationState?.phase ?? 'shares';
+  const isGraduated = marketInfo?.graduated || phase === 'graduated';
+  const activeTokenSymbol = (graduationState?.tokenSymbol || tokenSymbol).replace('$', '').toUpperCase();
+  const canTradeToken = !!onOpenTrade && isGraduated;
+
+  // Reset market info when author changes
+  useEffect(() => {
+    setMarketInfo(null);
+    setMarketInfoFetched(false);
+    setIsHolder(false);
+  }, [author.id]);
+
+  // Fetch market info when we have the wallet address
+  useEffect(() => {
+    if (!isOpen || !walletAddress || marketInfoFetched) return;
+
+    let isMounted = true;
+    setMarketInfoLoading(true);
+
+    const fetchMarketInfo = async () => {
+      try {
+        const market = await findMarketByOwner(walletAddress);
+        if (!isMounted) return;
+        if (market) {
+          setMarketInfo({ objectId: market.objectId, holders: market.holders, graduated: market.graduated });
+          const holds = await checkHolderStatus(market.objectId);
+          if (isMounted) setIsHolder(holds);
+        }
+      } catch (err) {
+        console.error('Failed to fetch market info:', err);
+      } finally {
+        if (isMounted) {
+          setMarketInfoLoading(false);
+          setMarketInfoFetched(true);
+        }
+      }
+    };
+
+    fetchMarketInfo();
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, walletAddress, findMarketByOwner, checkHolderStatus, marketInfoFetched]);
+
+  // Use holdersCount - prioritize on-chain market data
+  // Minimum is 1 when user has a market (creator always holds first share)
+  const rawHoldersCount =
+    marketInfo?.holders ??
     holdersCountOverride ??
     author.holdersCount ??
     profile?.followers_count ??
     author.followersCount ??
     0;
+  // If author has an ID (is a registered user), they have a market, so minimum is 1
+  const hasMarket = !!marketInfo || !!author.id || !!profile;
+  const holdersCount = hasMarket ? Math.max(1, rawHoldersCount) : rawHoldersCount;
 
   // Calculate next share price (buy price = price for next holder)
   const nextSharePrice = useMemo(() => {
@@ -168,56 +234,140 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
   }, [holdersCount]);
 
   // Check if this is the current user's own profile
-  const isOwnProfile = account?.address && walletAddress && account.address === walletAddress;
+  const isOwnProfile = !!account?.address && !!walletAddress && account.address.toLowerCase() === walletAddress.toLowerCase();
 
-  // Handle follow action
+  // Handle follow action (social follow via API - separate from share purchase)
   const handleFollow = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
 
-    if (!author.id || !userProfile || isOwnProfile) return;
+    if (!author.id || isOwnProfile) return;
 
     setActionLoading(true);
     try {
-      // For now, we'll use a placeholder market ID - in production this would come from author data
-      const targetMarketId = author.id; // This should be the actual market object ID
-      await followUser(targetMarketId, author.id, holdersCount);
+      // Social follow via backend API (not on-chain)
+      // TODO: Implement API follow when backend supports it
       setIsFollowing(true);
     } catch (err) {
       console.error('Follow failed:', err);
     } finally {
       setActionLoading(false);
     }
-  }, [author.id, userProfile, isOwnProfile, followUser, holdersCount]);
+  }, [author.id, isOwnProfile]);
 
-  // Handle unfollow action
+  // Handle unfollow action (social unfollow via API)
   const handleUnfollow = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
 
-    if (!author.id || !userProfile) return;
+    if (!author.id) return;
 
     setActionLoading(true);
     try {
-      const targetMarketId = author.id;
-      await unfollowUser(targetMarketId, author.id);
+      // Social unfollow via backend API (not on-chain)
+      // TODO: Implement API unfollow when backend supports it
       setIsFollowing(false);
     } catch (err) {
       console.error('Unfollow failed:', err);
     } finally {
       setActionLoading(false);
     }
-  }, [author.id, userProfile, unfollowUser]);
+  }, [author.id]);
 
-  // Handle buy action - trigger callback with author info
+  // Handle buy action - open dialog for smart contract purchase
   const handleBuy = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
 
+    if (!account) {
+      showError('Please connect your wallet to buy shares');
+      return;
+    }
+
+    if (isHolder) {
+      showError('You already hold a share in this market');
+      return;
+    }
+
+    if (holdersCount >= MAX_SUPPLY) {
+      showError(`Market is sold out (max ${MAX_SUPPLY} holders)`);
+      return;
+    }
+
+    if (shareLoading || marketInfoLoading) {
+      showError('Loading market info, please wait...');
+      return;
+    }
+
+    if (!marketInfo) {
+      showError('Market not found. The user may not have created a market yet.');
+      return;
+    }
+
+    setPurchaseError(null);
+    setBuyDialogOpen(true);
+
+    // Also call the callback if provided (for external handling)
     if (onBuyClick) {
       onBuyClick(author);
     }
-  }, [onBuyClick, author]);
+  }, [account, marketInfo, holdersCount, shareLoading, marketInfoLoading, isHolder, onBuyClick, author, showError]);
+
+  // Handle confirm purchase - execute smart contract
+  const handleConfirmPurchase = useCallback(async () => {
+    if (!marketInfo || isPurchasing) {
+      setPurchaseError('Market not found');
+      return;
+    }
+
+    setIsPurchasing(true);
+    setPurchaseError(null);
+
+    try {
+      const result = await buyShare(marketInfo.objectId, holdersCount);
+
+      if (result.success) {
+        setPurchaseSuccessful(true);
+        setPurchaseTxDigest(result.txDigest);
+        setIsHolder(true);
+        // Update local holder count
+        const newHolders = holdersCount + 1;
+        setMarketInfo(prev => prev ? { ...prev, holders: prev.holders + 1 } : null);
+        setIsFollowing(true);
+        if (newHolders >= GRADUATION_THRESHOLD && holdersCount < GRADUATION_THRESHOLD) {
+          showSuccess(`@${author.username} just hit the graduation threshold! Token launch is now available.`);
+        } else {
+          showSuccess(`Successfully purchased a share of @${author.username}!`);
+        }
+      } else {
+        const errorMsg = result.error || 'Transaction failed';
+        setPurchaseError(errorMsg);
+        showError(errorMsg);
+      }
+    } catch (err: any) {
+      console.error('Failed to purchase share:', err);
+      const errorMessage = err.message || 'Failed to purchase share';
+      setPurchaseError(errorMessage);
+      showError(errorMessage);
+    } finally {
+      setIsPurchasing(false);
+    }
+  }, [marketInfo, isPurchasing, buyShare, holdersCount, author.username, showSuccess, showError]);
+
+  const handleOpenTrade = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (!onOpenTrade) return;
+      onOpenTrade({
+        tokenSymbol: activeTokenSymbol,
+        username: author.username,
+        creatorAddress: walletAddress ?? undefined,
+        source: 'feed',
+      });
+    },
+    [activeTokenSymbol, author.username, onOpenTrade]
+  );
 
   // Styling based on tone
   const containerClass =
@@ -246,7 +396,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
     ? `${buttonBaseClass} bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-400 hover:to-pink-400`
     : `${buttonBaseClass} bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600`;
 
-  const shortAddress = shortenAddress(walletAddress);
+  const shortAddress = shortenAddress(walletAddress ?? undefined);
 
   // Get avatar fallback character
   const fallbackChar = (username?.charAt(0) || '?').toUpperCase();
@@ -282,10 +432,15 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
     };
   }, [isOpen, anchorEl]);
 
-  // Don't render if not open or no position calculated
-  if (!isOpen) return null;
+  // Don't render the hover card if not open, BUT keep rendering if dialog is open
+  // This prevents the dialog from disappearing when mouse leaves the card
+  const shouldRenderCard = isOpen;
+  const shouldRenderDialog = buyDialogOpen;
 
-  const card = (
+  // If neither card nor dialog should render, return null
+  if (!shouldRenderCard && !shouldRenderDialog) return null;
+
+  const card = shouldRenderCard ? (
     <div
       ref={cardRef}
       className={`fixed z-[9999] w-72 rounded-lg p-4 ${containerClass}`}
@@ -305,7 +460,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
           {avatarUrl ? (
             <img
               src={avatarUrl}
-              alt={displayName || username}
+              alt={displayName}
               className="w-12 h-12 rounded-full object-cover"
             />
           ) : (
@@ -320,7 +475,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
         {/* Name and Address */}
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-base truncate">
-            {displayName || username}
+            @{displayName}
           </div>
           <div className={`text-sm font-mono ${mutedTextClass} truncate`}>
             {shortAddress || '—'}
@@ -341,25 +496,61 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
           <span className="font-semibold">
             {holdersCount.toLocaleString()}
           </span>
-          <span className={`ml-1 ${mutedTextClass}`}>holders</span>
+          <span className={`ml-1 ${mutedTextClass}`}>{isGraduated ? 'token holders' : 'holders'}</span>
         </div>
         <div className="text-sm">
           <span className={`font-semibold ${highlightClass}`}>
-            {nextSharePrice} SUI
+            {nextSharePrice}
           </span>
-          <span className={`ml-1 ${mutedTextClass}`}>/ share</span>
+          <span className={`ml-1 ${mutedTextClass}`}>/ {isGraduated ? 'token' : 'share'}</span>
         </div>
       </div>
+
+      {/* Token symbol entry point */}
+      <div className="mt-2 flex items-center justify-between">
+        <span className={`text-xs uppercase tracking-wide ${mutedTextClass}`}>Token</span>
+        {canTradeToken ? (
+          <button
+            onClick={handleOpenTrade}
+            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone === 'dark' ? 'bg-white/10 text-cyan-300 hover:bg-white/20' : 'bg-cyan-50 text-cyan-700 hover:bg-cyan-100'}`}
+          >
+            ${activeTokenSymbol}
+          </button>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone === 'dark' ? 'bg-white/10 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}>
+              ${activeTokenSymbol}
+            </span>
+            {phase === 'graduating' && !isGraduated && (
+              <span className={`text-[10px] font-medium ${tone === 'dark' ? 'text-amber-300' : 'text-amber-700'}`}>
+                Pending launch
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Graduation progress */}
+      {!isGraduated && (
+        <div className="mt-2">
+          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full"
+              style={{ width: `${graduationProgressPercent(holdersCount)}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Action Buttons */}
       {!isOwnProfile && account && (
         <div className="mt-4 flex items-center gap-2">
           <button
             onClick={isFollowing ? handleUnfollow : handleFollow}
-            disabled={actionLoading || followLoading}
+            disabled={actionLoading}
             className={`flex-1 flex items-center justify-center gap-1.5 ${followButtonClass}`}
           >
-            {actionLoading || followLoading ? (
+            {actionLoading ? (
               <Loader2 className="w-3 h-3 animate-spin" />
             ) : isFollowing ? (
               <>
@@ -373,17 +564,52 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
               </>
             )}
           </button>
-          <button
-            onClick={handleBuy}
-            className={`flex-1 flex items-center justify-center gap-1.5 ${buyButtonClass}`}
-          >
-            <ShoppingCart className="w-3 h-3" />
-            Buy
-          </button>
+          {!!marketInfo && !isGraduated && !isHolder && holdersCount < MAX_SUPPLY && (
+            <button
+              onClick={handleBuy}
+              disabled={isPurchasing || marketInfoLoading}
+              className={`flex-1 flex items-center justify-center gap-1.5 ${buyButtonClass} disabled:opacity-50`}
+            >
+              {shareLoading || marketInfoLoading ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <>
+                  <ShoppingCart className="w-3 h-3" />
+                  Buy
+                </>
+              )}
+            </button>
+          )}
         </div>
       )}
     </div>
-  );
+  ) : null;
 
-  return createPortal(card, document.body);
+  return createPortal(
+    <>
+      {card}
+      {shouldRenderDialog && (
+        <BuyShareDialog
+          open={buyDialogOpen}
+          onOpenChange={(open) => {
+            setBuyDialogOpen(open);
+            if (!open) {
+              setPurchaseSuccessful(false);
+              setPurchaseTxDigest(undefined);
+            }
+          }}
+          targetUsername={username || ''}
+          targetAvatarUrl={avatarUrl}
+          currentHolders={holdersCount}
+          onConfirm={handleConfirmPurchase}
+          isPurchasing={isPurchasing}
+          error={purchaseError}
+          graduationState={graduationState ?? undefined}
+          purchaseSuccess={purchaseSuccessful}
+          txDigest={purchaseTxDigest}
+        />
+      )}
+    </>,
+    document.body
+  );
 };

@@ -2,15 +2,14 @@
 ///
 /// Provides validation for profile fields (username, bio, avatar_url) with security checks.
 /// These validations protect against XSS, injection attacks, and ensure data quality.
-
 use crate::username_validation::{validate_username, UsernameValidationError};
-use regex::Regex;
 use once_cell::sync::Lazy;
+use regex::Regex;
 
 /// Allowed R2 CDN domains for avatar URLs
 const ALLOWED_AVATAR_DOMAINS: &[&str] = &[
-    "img.c0rd.xyz",  // Production R2 public domain
-    "pub-",          // Cloudflare R2 public bucket prefix
+    "img.c0rd.xyz", // Production R2 public domain
+    "pub-",         // Cloudflare R2 public bucket prefix
     "r2.dev",
     "r2.cloudflarestorage.com",
     "localhost",
@@ -32,9 +31,8 @@ static HTML_TAG_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// Control character pattern (except newline and carriage return)
-static CONTROL_CHAR_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]").unwrap()
-});
+static CONTROL_CHAR_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]").unwrap());
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProfileValidationError {
@@ -138,10 +136,7 @@ pub fn validate_bio(bio: &str) -> Result<String, ProfileValidationError> {
     }
 
     // Limit consecutive newlines to 2
-    let normalized = trimmed
-        .lines()
-        .collect::<Vec<_>>()
-        .join("\n");
+    let normalized = trimmed.lines().collect::<Vec<_>>().join("\n");
 
     // Collapse more than 2 consecutive newlines
     let re = Regex::new(r"\n{3,}").unwrap();
@@ -161,9 +156,9 @@ pub fn validate_avatar_url(url: &str) -> Result<Option<String>, ProfileValidatio
     }
 
     // Check if URL is from an allowed domain
-    let is_allowed = ALLOWED_AVATAR_DOMAINS.iter().any(|domain| {
-        trimmed.contains(domain)
-    });
+    let is_allowed = ALLOWED_AVATAR_DOMAINS
+        .iter()
+        .any(|domain| trimmed.contains(domain));
 
     if !is_allowed {
         return Err(ProfileValidationError::InvalidAvatarDomain);
@@ -223,7 +218,10 @@ mod tests {
 
         // Too long
         let long_bio = "a".repeat(51);
-        assert_eq!(validate_bio(&long_bio), Err(ProfileValidationError::TooLong));
+        assert_eq!(
+            validate_bio(&long_bio),
+            Err(ProfileValidationError::TooLong)
+        );
 
         // Contains URL
         assert_eq!(
@@ -275,7 +273,9 @@ mod tests {
         // Reuses existing validation
         assert!(matches!(
             validate_username_for_update("ab"),
-            Err(ProfileValidationError::UsernameError(UsernameValidationError::TooShort))
+            Err(ProfileValidationError::UsernameError(
+                UsernameValidationError::TooShort
+            ))
         ));
     }
 }

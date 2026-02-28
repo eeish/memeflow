@@ -63,8 +63,8 @@ export const getDefaultNetwork = (): SuiNetworkName => {
     return envNetwork as SuiNetworkName;
   }
   
-  // Default to devnet for development
-  return 'devnet';
+  // Default to testnet
+  return 'testnet';
 };
 
 // Get network configuration
@@ -121,6 +121,11 @@ export const loadNetworkPreference = (): SuiNetworkName | null => {
 
 // Get network with user preference fallback
 export const getUserPreferredNetwork = (): SuiNetworkName => {
+  const envNetwork = import.meta.env.VITE_SUI_NETWORK || import.meta.env.VITE_NETWORK;
+  if (envNetwork && envNetwork in SUI_NETWORKS) {
+    return envNetwork as SuiNetworkName;
+  }
+
   const saved = loadNetworkPreference();
   return saved || getDefaultNetwork();
 };

@@ -78,6 +78,7 @@ Cord Service includes comprehensive Sui address verification to ensure new users
 ### Social Features
 - `GET /api/posts` - Get posts feed
 - `POST /api/posts` - Create new post
+- `DELETE /api/posts/:id` - Delete a post (author only)
 - `POST /api/posts/:id/like` - Like/unlike post
 - `POST /api/posts/:id/comment` - Comment on post
 
@@ -139,7 +140,6 @@ let cors = CorsLayer::new()
 - `wallet_address` - Optional Sui wallet address
 - `email` - Optional email for traditional auth
 - `username` - Unique username (becomes token symbol)
-- `display_name` - Display name
 - `avatar_url` - Profile picture URL
 - `bio` - User biography
 - `token_symbol` - Associated token symbol
@@ -208,8 +208,7 @@ if (existsData.success && !existsData.data) {
 // Example: Create user with wallet verification
 const newUser = {
     wallet_address: suiAddress,
-    username: "cryptotrader",
-    display_name: "Crypto Trader"
+    username: "cryptotrader"
 };
 
 const response = await fetch('http://localhost:3001/api/users', {

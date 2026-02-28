@@ -455,3 +455,53 @@ export function ShoppingCart(props: IconProps) {
     </IconBase>
   );
 }
+
+export function Trash2(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </IconBase>
+  );
+}
+
+export function MoreHorizontal(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
+      <circle cx="5" cy="12" r="1" />
+    </IconBase>
+  );
+}
+
+export function Rocket(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" />
+      <path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
+      <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+      <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+    </IconBase>
+  );
+}
+
+export function Crown(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M2 20h20L19 8l-5 5-2-7-2 7-5-5z" />
+      <line x1="2" y1="20" x2="22" y2="20" />
+    </IconBase>
+  );
+}
+
+export function Briefcase(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+      <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+    </IconBase>
+  );
+}

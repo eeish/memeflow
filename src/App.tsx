@@ -7,11 +7,13 @@ import { EditProfile } from './components/EditProfile';
 import { Notifications } from './components/Notifications';
 import { Plaza } from './components/Plaza';
 import { UserProfilePage } from './components/UserProfilePage';
+import { TradePage } from './components/trade/TradePage';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { NotificationContainer } from './components/notifications/NotificationContainer';
 import type { User } from './lib/api';
 import type { FeedAuthor } from './components/feed/types';
 import type { UserSummary } from './types/users';
+import type { TradePageContext } from './types/trade';
 
 // Main App Content Component
 function AppContent() {
@@ -19,6 +21,15 @@ function AppContent() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [selectedUserProfile, setSelectedUserProfile] = useState<UserSummary | null>(null);
+  const [tradeRoute, setTradeRoute] = useState<{
+    market: TradePageContext;
+    previousView: {
+      showProfile: boolean;
+      showNotifications: boolean;
+      showEditProfile: boolean;
+      selectedUserProfile: UserSummary | null;
+    };
+  } | null>(null);
   const { user, setUser, refreshUser } = useAuth();
 
   const handleProfileClick = () => {
@@ -38,6 +49,37 @@ function AppContent() {
     setShowNotifications(false);
     setShowEditProfile(false);
     setSelectedUserProfile(null);
+    setTradeRoute(null);
+  };
+
+  const handleOpenTradePage = (market: TradePageContext) => {
+    setTradeRoute({
+      market,
+      previousView: {
+        showProfile,
+        showNotifications,
+        showEditProfile,
+        selectedUserProfile,
+      },
+    });
+    setShowProfile(false);
+    setShowNotifications(false);
+    setShowEditProfile(false);
+    setSelectedUserProfile(null);
+  };
+
+  const handleCloseTradePage = () => {
+    if (!tradeRoute) {
+      handleBackToFeed();
+      return;
+    }
+
+    const { previousView } = tradeRoute;
+    setTradeRoute(null);
+    setShowProfile(previousView.showProfile);
+    setShowNotifications(previousView.showNotifications);
+    setShowEditProfile(previousView.showEditProfile);
+    setSelectedUserProfile(previousView.selectedUserProfile);
   };
 
   // Handle navigation to a user's public profile from the feed
@@ -52,7 +94,6 @@ function AppContent() {
     const userSummary: UserSummary = {
       id: author.id || '',
       username: author.username,
-      display_name: author.displayName || null,
       avatar_url: author.avatarUrl || null,
       token_symbol: author.tokenSymbol || author.username.toUpperCase(),
     };
@@ -60,6 +101,28 @@ function AppContent() {
     setShowProfile(false);
     setShowNotifications(false);
     setShowEditProfile(false);
+  };
+
+  // Handle navigation from Holdings (UserSummary)
+  const handleNavigateToUserSummary = (userSummary: UserSummary) => {
+    if (userSummary.id === user?.id) {
+      setShowProfile(true);
+      return;
+    }
+    setSelectedUserProfile(userSummary);
+    setShowProfile(false);
+    setShowNotifications(false);
+    setShowEditProfile(false);
+  };
+
+  // Unified handler: accepts either FeedAuthor or UserSummary
+  // UserSummary has snake_case `token_symbol`; FeedAuthor has camelCase `tokenSymbol`
+  const handleNavigateToAnyProfile = (profile: FeedAuthor | UserSummary) => {
+    if ('token_symbol' in profile) {
+      handleNavigateToUserSummary(profile as UserSummary);
+    } else {
+      handleNavigateToUserProfile(profile as FeedAuthor);
+    }
   };
 
   const handleEditProfile = () => {
@@ -82,6 +145,10 @@ function AppContent() {
     setShowProfile(true);
   };
 
+  if (tradeRoute) {
+    return <TradePage market={tradeRoute.market} onClose={handleCloseTradePage} />;
+  }
+
   // Show edit profile view
   if (showEditProfile && user) {
     return (
@@ -100,12 +167,19 @@ function AppContent() {
         user={user}
         onClose={handleBackToFeed}
         onEditProfile={handleEditProfile}
+        onOpenTrade={handleOpenTradePage}
       />
     );
   }
 
   if (showNotifications) {
-    return <Notifications user={user} onClose={handleBackToFeed} />;
+    return (
+      <Notifications
+        user={user}
+        onClose={handleBackToFeed}
+        onOpenPost={() => handleBackToFeed()}
+      />
+    );
   }
 
   // Show public user profile page
@@ -125,7 +199,10 @@ function AppContent() {
           </div>
         </header>
         <main className="max-w-3xl mx-auto px-4 py-6">
-          <UserProfilePage user={selectedUserProfile} />
+          <UserProfilePage
+            user={selectedUserProfile}
+            onOpenTrade={handleOpenTradePage}
+          />
         </main>
       </div>
     );
@@ -167,10 +244,14 @@ function AppContent() {
             </button>
           </div>
         </div>
+
       </header>
 
-      {/* Feed */}
-      <Plaza user={user} onNavigateToProfile={handleNavigateToUserProfile} />
+      <Plaza
+        user={user}
+        onNavigateToProfile={handleNavigateToAnyProfile}
+        onOpenTrade={handleOpenTradePage}
+      />
     </div>
   );
 }

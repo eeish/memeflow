@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { getFullnodeUrl } from '@mysten/sui.js/client'
 import './index.css'
 import App from './App'
+import { getDefaultNetwork } from './lib/networks'
 
 // Configure QueryClient with proper settings
 const queryClient = new QueryClient({
@@ -35,13 +36,15 @@ const { networkConfig } = createNetworkConfig({
   devnet: { 
     url: import.meta.env.VITE_DEVNET_RPC || getFullnodeUrl('devnet')
   },
-  // For local networks, we'll use testnet config as fallback since local doesn't have standard chain ID
-  local: { 
-    url: import.meta.env.VITE_LOCAL_RPC || 'http://127.0.0.1:9000'
+  // Local network uses a custom RPC URL
+  localnet: { 
+    url: import.meta.env.VITE_LOCALNET_RPC || import.meta.env.VITE_LOCAL_RPC || 'http://127.0.0.1:9000'
   },
 })
 
-const defaultNetwork = (import.meta.env.VITE_NETWORK as keyof typeof networkConfig) || 'testnet'
+const envNetwork = (import.meta.env.VITE_SUI_NETWORK || import.meta.env.VITE_NETWORK) as keyof typeof networkConfig | undefined
+const defaultNetwork =
+  (envNetwork && envNetwork in networkConfig ? envNetwork : undefined) || getDefaultNetwork()
 
 const rootElement = document.getElementById('root')
 if (!rootElement) {
@@ -52,7 +55,7 @@ createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <SuiClientProvider networks={networkConfig} defaultNetwork={defaultNetwork}>
-        <WalletProvider autoConnect enableUnsafeBurner>
+        <WalletProvider autoConnect enableUnsafeBurner slushWallet={{ name: 'Slush' }}>
           <App />
         </WalletProvider>
       </SuiClientProvider>

@@ -8,15 +8,16 @@ import {
 import { Transaction } from '@mysten/sui/transactions';
 import { SUI_CLOCK_OBJECT_ID } from '@mysten/sui/utils';
 import { useContractAddresses } from './useContractsSocial';
+import { MAX_SUPPLY, TERM2_DENOM_BASE } from '../lib/graduation';
 
 // Constants from the contract (share_market.move)
-// Bonding curve: p(x) = 0.02 + 0.35/(x+3) + 1/(38-x) SUI
+// Bonding curve: p(x) = 0.02 + 0.35/(x+3) + 1/(TERM2_DENOM_BASE-x) SUI
 const MIST_PER_SUI = 1_000_000_000;
 const PRICE_BASE = 20_000_000n;         // 0.02 SUI in MIST
 const PRICE_TERM1_NUM = 350_000_000n;   // 0.35 SUI numerator
 const PRICE_TERM2_NUM = 1_000_000_000n; // 1.0 SUI numerator
 const TERM1_OFFSET = 3n;                // x + 3
-const TERM2_DENOM_BASE = 38n;           // 38 - x
+const TERM2_DENOM_BASE_BIGINT = BigInt(TERM2_DENOM_BASE);
 
 export interface FollowProfile {
   id: string;
@@ -43,13 +44,13 @@ export interface FollowStats {
 }
 
 // Calculate price in MIST for x-th holder/share using bonding curve from contract
-// p(x) = 0.02 + 0.35/(x+3) + 1/(38-x) SUI
+// p(x) = 0.02 + 0.35/(x+3) + 1/(TERM2_DENOM_BASE-x) SUI
 export function calculatePriceMist(x: number): bigint {
   if (x < 1) x = 1;
-  if (x > 30) x = 30;
+  if (x > MAX_SUPPLY) x = MAX_SUPPLY;
   const xBig = BigInt(x);
   const term1 = PRICE_TERM1_NUM / (xBig + TERM1_OFFSET);
-  const term2 = PRICE_TERM2_NUM / (TERM2_DENOM_BASE - xBig);
+  const term2 = PRICE_TERM2_NUM / (TERM2_DENOM_BASE_BIGINT - xBig);
   return PRICE_BASE + term1 + term2;
 }
 
@@ -67,15 +68,17 @@ export function useSocialFollow() {
   const account = useCurrentAccount();
   const client = useSuiClient();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction();
-  const { packageId } = useContractAddresses();
-  
+  // packageId = latest version for calling functions
+  // originalPackageId = first deployment for querying existing objects
+  const { packageId, originalPackageId } = useContractAddresses();
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // State for user's profile
   const [userProfile, setUserProfile] = useState<FollowProfile | null>(null);
   const [followingList, setFollowingList] = useState<string[]>([]);
-  
+
   // Update user profile with current and next price
   useEffect(() => {
     if (userProfile) {
@@ -84,9 +87,12 @@ export function useSocialFollow() {
       setUserProfile(prev => prev ? {...prev, currentPrice, nextPrice} : null);
     }
   }, [userProfile?.followerCount]);
-  
+
   // Use package ID from contract addresses hook
+  // PACKAGE_ID for calling functions (latest version)
   const PACKAGE_ID = packageId;
+  // ORIGINAL_PACKAGE_ID for querying existing objects
+  const ORIGINAL_PACKAGE_ID = originalPackageId;
 
   // Create profile (FollowBook + Market)
   // Only requires username (token name) - cannot be changed later
@@ -400,10 +406,11 @@ export function useSocialFollow() {
 
     try {
       // Query user's FollowBook and Market objects
+      // Use ORIGINAL_PACKAGE_ID since objects were created with the original package type
       const objects = await client.getOwnedObjects({
         owner: account.address,
         filter: {
-          StructType: `${PACKAGE_ID}::social_follow::FollowBook`,
+          StructType: `${ORIGINAL_PACKAGE_ID}::social_follow::FollowBook`,
         },
       });
 
@@ -434,7 +441,7 @@ export function useSocialFollow() {
     } catch (err) {
       console.error('Error fetching user profile:', err);
     }
-  }, [account, client, PACKAGE_ID]);
+  }, [account, client, ORIGINAL_PACKAGE_ID]);
 
   // Load following list from localStorage
   const loadFollowingList = useCallback(() => {

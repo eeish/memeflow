@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from './ui-simple/Button';
 import { Label } from './ui-simple/Label';
 import { apiService } from '../lib/api';
+import { GRADUATION_THRESHOLD, MAX_SUPPLY, TERM2_DENOM_BASE } from '../lib/graduation';
 
 interface MemeLaunchPageProps {
   walletAddress: string;
@@ -14,9 +15,9 @@ interface MemeLaunchPageProps {
 
 type ValidationStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 
-// Price curve: p(x) = 0.02 + 0.35/(x + 3) + 1/(38 − x)
+// Price curve: p(x) = 0.02 + 0.35/(x + 3) + 1/(TERM2_DENOM_BASE - x)
 const calculatePrice = (x: number): number => {
-  return 0.02 + 0.35 / (x + 3) + 1 / (38 - x);
+  return 0.02 + 0.35 / (x + 3) + 1 / (TERM2_DENOM_BASE - x);
 };
 
 const PriceCurveChart: React.FC = () => {
@@ -26,9 +27,9 @@ const PriceCurveChart: React.FC = () => {
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
 
-  // Generate points for x = 0 to 30
+  // Generate points for x = 0 to MAX_SUPPLY
   const points: { x: number; y: number }[] = [];
-  for (let i = 0; i <= 30; i++) {
+  for (let i = 0; i <= MAX_SUPPLY; i++) {
     points.push({ x: i, y: calculatePrice(i) });
   }
 
@@ -38,7 +39,7 @@ const PriceCurveChart: React.FC = () => {
   const priceRange = maxPrice - minPrice;
 
   // Scale functions
-  const scaleX = (x: number) => padding.left + (x / 30) * chartWidth;
+  const scaleX = (x: number) => padding.left + (x / MAX_SUPPLY) * chartWidth;
   const scaleY = (y: number) => padding.top + chartHeight - ((y - minPrice) / priceRange) * chartHeight;
 
   // Create path
@@ -46,9 +47,10 @@ const PriceCurveChart: React.FC = () => {
     .map((p, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(p.x)} ${scaleY(p.y)}`)
     .join(' ');
 
-  // Graduation milestone at x=30
-  const graduationX = scaleX(30);
-  const graduationY = scaleY(calculatePrice(30));
+  // Graduation milestone at configured threshold
+  const graduationX = scaleX(GRADUATION_THRESHOLD);
+  const graduationY = scaleY(calculatePrice(GRADUATION_THRESHOLD));
+  const middleTick = Math.floor(MAX_SUPPLY / 2);
 
   return (
     <svg width={width} height={height} className="w-full h-auto">
@@ -62,8 +64,8 @@ const PriceCurveChart: React.FC = () => {
 
       {/* X-axis labels */}
       <text x={padding.left} y={height - 8} textAnchor="middle" className="text-[10px] fill-gray-400">0</text>
-      <text x={scaleX(15)} y={height - 8} textAnchor="middle" className="text-[10px] fill-gray-400">15</text>
-      <text x={scaleX(30)} y={height - 8} textAnchor="middle" className="text-[10px] fill-gray-400">30</text>
+      <text x={scaleX(middleTick)} y={height - 8} textAnchor="middle" className="text-[10px] fill-gray-400">{middleTick}</text>
+      <text x={scaleX(MAX_SUPPLY)} y={height - 8} textAnchor="middle" className="text-[10px] fill-gray-400">{MAX_SUPPLY}</text>
 
       {/* Axis labels */}
       <text x={padding.left - 35} y={padding.top + chartHeight / 2} textAnchor="middle" transform={`rotate(-90, ${padding.left - 35}, ${padding.top + chartHeight / 2})`} className="text-[9px] fill-gray-400">SUI</text>
@@ -391,16 +393,16 @@ export const MemeLaunchPage: React.FC<MemeLaunchPageProps> = ({
                 <div>
                   <span className="font-medium text-gray-600">Formula:</span>{' '}
                   <code className="bg-gray-100 px-1.5 py-0.5 rounded font-mono text-[10px]">
-                    p(x) = 0.02 + 0.35/(x+3) + 1/(38−x)
+                    p(x) = 0.02 + 0.35/(x+3) + 1/({TERM2_DENOM_BASE}-x)
                   </code>
                 </div>
                 <div>
                   <span className="font-medium text-gray-600">Phase 1:</span>{' '}
-                  Shares 1–30 follow bonding curve pricing
+                  Shares 1-{MAX_SUPPLY} follow bonding curve pricing
                 </div>
                 <div>
                   <span className="font-medium text-gray-600">Phase 2:</span>{' '}
-                  At 30 real holders, unlock $TICKER minting
+                  At {GRADUATION_THRESHOLD} real holders, unlock $TICKER minting
                 </div>
                 <div>
                   <span className="font-medium text-gray-600">Fees:</span>{' '}
@@ -410,7 +412,7 @@ export const MemeLaunchPage: React.FC<MemeLaunchPageProps> = ({
             )}
 
             <p className="text-gray-400 text-sm">
-              Goal: 30 Real Holders to unlock $TICKER minting.
+              Goal: {GRADUATION_THRESHOLD} Real Holders to unlock $TICKER minting.
             </p>
           </div>
 

@@ -256,18 +256,17 @@ PRAGMA foreign_keys = OFF;
 BEGIN TRANSACTION;
 
 -- Truncate all tables in correct order (respecting dependencies)
--- Note: Only delete from tables that exist
 DELETE FROM notifications WHERE 1=1;
 DELETE FROM likes WHERE 1=1;
-DELETE FROM comments WHERE 1=1; 
+DELETE FROM comments WHERE 1=1;
+DELETE FROM media_blobs WHERE 1=1;
 DELETE FROM posts WHERE 1=1;
 DELETE FROM follows WHERE 1=1;
 DELETE FROM users WHERE 1=1;
 
--- Reset auto-increment sequences (if table exists)
-DELETE FROM sqlite_sequence WHERE name IN (
-    'users', 'posts', 'comments', 'notifications', 'likes', 'follows'
-) AND EXISTS (SELECT name FROM sqlite_master WHERE type='table' AND name='sqlite_sequence');
+-- Note: sqlite_sequence is intentionally omitted. It only exists when tables use
+-- INTEGER PRIMARY KEY AUTOINCREMENT. All tables here use TEXT (UUID) primary keys,
+-- so sqlite_sequence is never created.
 
 -- Commit the transaction
 COMMIT;

@@ -456,7 +456,6 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
   const createUserWithWallet = async (userData: {
     walletAddress: string;
     username: string;
-    displayName?: string;
     bio?: string;
     avatarUrl?: string;
   }) => {
@@ -471,7 +470,6 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         body: JSON.stringify({
           wallet_address: userData.walletAddress,
           username: userData.username,
-          display_name: userData.displayName || userData.username,
           bio: userData.bio,
           avatar_url: userData.avatarUrl,
         }),
@@ -656,7 +654,6 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       const newUser = await createUserWithWallet({
         walletAddress: pendingWalletAddress,
         username: userData.username,
-        displayName: userData.username,
         bio: undefined,
         avatarUrl: undefined,
       });
@@ -770,7 +767,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     return (
       <ProfileSetupFlow
         walletAddress={pendingWalletAddress}
-        skipOnChain={pendingAuthMethod === 'zklogin'}
+        skipOnChain={false}
         onComplete={handleMemeLaunchComplete}
         onCancel={handleMemeLaunchCancel}
       />
@@ -829,7 +826,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-base text-gray-900 mb-1">Sui</div>
-                    <div className="text-xs text-gray-500">Sui Wallet, Suiet, Ethos</div>
+                    <div className="text-xs text-gray-500">Slush, Sui Wallet, Suiet, Ethos</div>
                   </div>
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 flex-shrink-0" />
                 </div>

@@ -2,7 +2,27 @@
 
 ## Product Overview
 
-Cord is a **decentralized social platform with tokenized influence** on Sui. Creators can monetize their social graph through share markets, while supporters gain economic alignment with creators they believe in.
+Cord is a **decentralized Social-Fi platform** on Sui where content creation is directly tied to financial upside. Creators post content, supporters buy into creators they believe in, and economic alignment drives the whole system.
+
+**Onboarding:** Users log in via Slush Wallet or zkLogin, then set a username. All on-chain complexity is hidden behind this flow.
+
+### Social-Fi Mechanism — Two Phases
+
+#### Phase 1: Share Market
+- Users post content to the **Plaza** (global feed).
+- Other users can **buy shares** in any creator. Price follows a bonding curve — early supporters pay less, price rises with demand.
+- Holding shares = access to the creator's **private domain** (exclusive content, private comments).
+- The bonding curve incentivizes creators to produce better content (more demand → higher share price → creator benefits).
+- Liquidity from share purchases accumulates in the bonding curve pool.
+
+#### Phase 2: Token Graduation
+- When a creator's shares sold reach a threshold (e.g. 50), the accumulated liquidity is used to **mint a creator-specific token**.
+- Existing share holders are converted to token holders.
+- The token is freely tradeable — other users discover it through the creator's content in the Plaza.
+- Token appreciation = creator income from content creation.
+- Token holders retain private domain access.
+
+**Key insight:** Shares (Phase 1) and tokens (Phase 2) both function as an **entrance ticket to the private domain**. The transition from shares to tokens unlocks broader liquidity and price discovery while preserving the core economic alignment between creators and supporters.
 
 ### Design Principles
 
@@ -10,15 +30,16 @@ Cord is a **decentralized social platform with tokenized influence** on Sui. Cre
 
 2. **Creator-first UX** - Target audience is crypto-native creators. They understand wallets and transactions, but don't want friction. Optimize flows for posting, engaging, and managing their share market.
 
-3. **Economic alignment** - The share market creates real stakes. Holders benefit when creators succeed. Design should reinforce this relationship.
+3. **Economic alignment** - The share/token market creates real stakes. Holders benefit when creators succeed. Design should reinforce this relationship at every layer.
 
 4. **Verifiable but not verbose** - On-chain attestations provide proof, but don't clutter the UI with hashes and transaction IDs. Make verification accessible, not prominent.
 
 ### Core Features
 - **Plaza** - Global feed of all posts
-- **Share Market** - Buy/sell shares in creators (bonding curve pricing)
+- **Share Market** (Phase 1) - Buy/sell shares in creators (bonding curve pricing)
+- **Token Graduation** (Phase 2) - Shares → tradeable creator token when threshold is met
+- **Private Domain** - Exclusive content/comments for share/token holders
 - **Post Attestation** - On-chain proof that content existed at a specific time
-- **News Feed** - Posts from creators you hold shares in
 
 ## Development Commands
 
@@ -73,10 +94,11 @@ Key modules:
 - Hash: SHA256(author || timestamp_ms || content)
 - Posts stored off-chain, immutable attestation on-chain
 
-**`share_market.move`** - Share Market
+**`share_market.move`** - Share Market (Phase 1)
 - Bonding curve: `p(x) = 0.02 + 0.35/(x+3) + 1/(38-x)` SUI
 - Max 30 holders per creator, 1 share per wallet
 - Creator must buy first share at market creation
+- Accumulated liquidity funds token graduation in Phase 2
 
 ## Key Files
 - `src/App.tsx` - Main app with routing

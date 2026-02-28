@@ -66,7 +66,7 @@ impl SuiVerification {
         // Remove 0x prefix, pad with zeros to 64 chars, then add 0x back
         let without_prefix = address.strip_prefix("0x").unwrap_or(address);
         let padded = format!("{:0>64}", without_prefix);
-        
+
         if padded.len() != 64 {
             return Err(anyhow!("Address too long"));
         }
@@ -81,7 +81,7 @@ impl SuiVerification {
         address: &str,
     ) -> Result<bool> {
         let normalized = Self::normalize_address(address)?;
-        
+
         // Check if any user has this wallet address
         let exists = db.user_exists_by_address(&normalized).await?;
 
@@ -91,15 +91,21 @@ impl SuiVerification {
     /// Get on-chain data for an address using Sui RPC
     pub async fn get_on_chain_data(&self, address: &str) -> Result<OnChainUserData> {
         let normalized = Self::normalize_address(address)?;
-        
+
         match &self.network_url {
             Some(url) => {
                 // Try to get balance via RPC call
-                let balance = self.get_balance_via_rpc(&normalized, url).await.unwrap_or(0);
-                
-                // Try to get transaction count via RPC call  
-                let transaction_count = self.get_transaction_count_via_rpc(&normalized, url).await.unwrap_or(0);
-                
+                let balance = self
+                    .get_balance_via_rpc(&normalized, url)
+                    .await
+                    .unwrap_or(0);
+
+                // Try to get transaction count via RPC call
+                let transaction_count = self
+                    .get_transaction_count_via_rpc(&normalized, url)
+                    .await
+                    .unwrap_or(0);
+
                 let has_transactions = transaction_count > 0;
                 let is_active = balance > 0 || transaction_count > 0;
 
@@ -113,7 +119,10 @@ impl SuiVerification {
             }
             None => {
                 // Mock data when no network URL is available
-                tracing::warn!("No Sui network URL available, returning mock on-chain data for {}", address);
+                tracing::warn!(
+                    "No Sui network URL available, returning mock on-chain data for {}",
+                    address
+                );
                 Ok(OnChainUserData {
                     has_transactions: false,
                     transaction_count: 0,
@@ -142,7 +151,8 @@ impl SuiVerification {
             params: vec![serde_json::Value::String(address.to_string())],
         };
 
-        match self.http_client
+        match self
+            .http_client
             .post(network_url)
             .json(&request)
             .send()
@@ -192,7 +202,8 @@ impl SuiVerification {
             ],
         };
 
-        match self.http_client
+        match self
+            .http_client
             .post(network_url)
             .json(&request)
             .send()
@@ -287,7 +298,7 @@ impl SuiVerification {
     pub fn generate_username_from_address(address: &str) -> Result<String> {
         let normalized = Self::normalize_address(address)?;
         // Take last 8 characters (after 0x) and make it more readable
-        let suffix = &normalized[normalized.len()-8..];
+        let suffix = &normalized[normalized.len() - 8..];
         Ok(format!("user{}", suffix))
     }
 
@@ -295,11 +306,11 @@ impl SuiVerification {
     pub fn is_legitimate_address(on_chain_data: &OnChainUserData) -> bool {
         // Consider an address legitimate if it:
         // 1. Has at least one transaction, OR
-        // 2. Has a balance > 0, OR  
+        // 2. Has a balance > 0, OR
         // 3. Is marked as active
-        on_chain_data.has_transactions || 
-        on_chain_data.balance.unwrap_or(0) > 0 ||
-        on_chain_data.is_active
+        on_chain_data.has_transactions
+            || on_chain_data.balance.unwrap_or(0) > 0
+            || on_chain_data.is_active
     }
 }
 
@@ -312,11 +323,13 @@ mod tests {
         // Valid addresses
         assert!(SuiVerification::validate_address_format("0x1"));
         assert!(SuiVerification::validate_address_format("0x123abc"));
-        assert!(SuiVerification::validate_address_format("0x1234567890abcdef1234567890abcdef12345678"));
-        
+        assert!(SuiVerification::validate_address_format(
+            "0x1234567890abcdef1234567890abcdef12345678"
+        ));
+
         // Invalid addresses
         assert!(!SuiVerification::validate_address_format("1234"));
-        assert!(!SuiVerification::validate_address_format("0x")); 
+        assert!(!SuiVerification::validate_address_format("0x"));
         assert!(!SuiVerification::validate_address_format("0xgg"));
         assert!(!SuiVerification::validate_address_format("not_an_address"));
     }
@@ -327,15 +340,18 @@ mod tests {
             SuiVerification::normalize_address("0x1").unwrap(),
             "0x0000000000000000000000000000000000000000000000000000000000000001"
         );
-        
+
         assert_eq!(
             SuiVerification::normalize_address("0x123abc").unwrap(),
-            "0x000000000000000000000000000000000000000000000000000000000123abc"
+            "0x0000000000000000000000000000000000000000000000000000000000123abc"
         );
-        
+
         // Already normalized
         let full_addr = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-        assert_eq!(SuiVerification::normalize_address(full_addr).unwrap(), full_addr);
+        assert_eq!(
+            SuiVerification::normalize_address(full_addr).unwrap(),
+            full_addr
+        );
     }
 
     #[test]

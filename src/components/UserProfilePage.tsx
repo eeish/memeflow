@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { UserPlus, UserMinus, ShoppingCart, Loader2 } from './ui-simple/Icons';
+import { UserPlus, UserMinus, ShoppingCart, Loader2, Rocket } from './ui-simple/Icons';
 import { Avatar, AvatarFallback, AvatarImage } from './ui-simple/Avatar';
 import { Card } from './ui-simple/Card';
 import type { UserSummary } from '../types/users.ts';
@@ -7,19 +7,23 @@ import { apiService, type PostWithAuthor, type User } from '../lib/api';
 import type { FeedPostItem } from './feed/types';
 import { FeedPostCard } from './feed/FeedPostCard';
 import { formatTimeAgo, inferMediaType } from '../lib/feed';
-import { calculatePriceMist, formatMistToSui } from '../hooks/useSocialFollow';
+import { useShareMarket, calculatePriceMist, formatMistToSui } from '../hooks/useShareMarket';
+import { useGraduation } from '../hooks/useGraduation';
+import { GRADUATION_THRESHOLD, MAX_SUPPLY, graduationProgressPercent } from '../lib/graduation';
 import { useAuth } from './AuthProvider';
+import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useNotifications } from '../contexts/NotificationContext';
+import { BuyShareDialog } from './BuyShareDialog';
+import type { TradePageContext } from '../types/trade';
 
 interface UserProfilePageProps {
   user: UserSummary;
+  onOpenTrade?: (context: TradePageContext) => void;
 }
 
-export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user }) => {
-  const displayName = user.display_name?.trim() || `@${user.username}`;
+export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTrade }) => {
+  const displayName = `@${user.username}`;
   const avatarFallback = user.username.charAt(0).toUpperCase();
-  const normalizedDisplay = displayName.replace(/^@/, '').toLowerCase();
-  const normalizedUsername = user.username.toLowerCase();
-  const showHandle = Boolean(user.display_name) && normalizedDisplay !== normalizedUsername;
   const [posts, setPosts] = useState<PostWithAuthor[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
   const [postsError, setPostsError] = useState<string | null>(null);
@@ -29,21 +33,84 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user }) => {
 
   // Follow/Buy Share state
   const { user: currentUser } = useAuth();
+  const currentAccount = useCurrentAccount();
+  const { success: showSuccess, error: showError } = useNotifications();
+  const { findMarketByOwner, buyShare, checkHolderStatus, loading: shareLoading } = useShareMarket();
+
   const [isFollowing, setIsFollowing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [followError, setFollowError] = useState<string | null>(null);
 
+  // Buy share dialog state
+  const [buyDialogOpen, setBuyDialogOpen] = useState(false);
+  const [isPurchasing, setIsPurchasing] = useState(false);
+  const [purchaseError, setPurchaseError] = useState<string | null>(null);
+  const [purchaseSuccessful, setPurchaseSuccessful] = useState(false);
+  const [purchaseTxDigest, setPurchaseTxDigest] = useState<string | undefined>(undefined);
+  const [marketInfo, setMarketInfo] = useState<{ objectId: string; holders: number; graduated: boolean } | null>(null);
+  const [isHolder, setIsHolder] = useState(false);
+
   // Check if viewing own profile
   const isOwnProfile = currentUser?.id === user.id;
 
-  // Get holders count from full profile or default to 0
-  const holdersCount = fullProfile?.followers_count ?? 0;
+  // Graduation state — on-chain `graduated` flag is the source of truth
+  const { graduationState } = useGraduation(fullProfile?.wallet_address);
+  const phase = graduationState?.phase ?? 'shares';
+  const isGraduated = marketInfo?.graduated || phase === 'graduated';
+  const profileTokenSymbol = (fullProfile?.token_symbol || user.token_symbol || user.username || 'TOKEN').replace('$', '').toUpperCase();
+  const activeTokenSymbol = (graduationState?.tokenSymbol || profileTokenSymbol).replace('$', '').toUpperCase();
+  const canTradeToken = !!onOpenTrade && isGraduated;
+
+  // Get holders count from market info, full profile, or default to 1 (creator always holds first share)
+  const rawHoldersCount = marketInfo?.holders ?? fullProfile?.followers_count ?? 0;
+  // If user has a profile, they have a market, so minimum is 1
+  const holdersCount = fullProfile ? Math.max(1, rawHoldersCount) : rawHoldersCount;
+
+  // Whether shares can be purchased
+  // Hide button when: market data not yet loaded, sold out, graduated, or already a holder
+  const canBuyShare = !isOwnProfile && !!marketInfo && !isGraduated && !isHolder && holdersCount < MAX_SUPPLY;
 
   // Calculate share price
   const sharePrice = useMemo(() => {
     const mist = calculatePriceMist(holdersCount + 1);
     return formatMistToSui(mist);
   }, [holdersCount]);
+
+  const handleOpenTrade = useCallback(() => {
+    if (!onOpenTrade || !canTradeToken) return;
+    onOpenTrade({
+      tokenSymbol: activeTokenSymbol,
+      username: user.username,
+      creatorAddress: fullProfile?.wallet_address,
+      source: 'profile',
+    });
+  }, [onOpenTrade, canTradeToken, activeTokenSymbol, user.username]);
+
+  // Fetch market info and holder status when we have the wallet address
+  useEffect(() => {
+    if (!fullProfile?.wallet_address) return;
+
+    let isMounted = true;
+    const fetchMarketInfo = async () => {
+      try {
+        const market = await findMarketByOwner(fullProfile.wallet_address!);
+        if (!isMounted) return;
+        if (market) {
+          setMarketInfo({ objectId: market.objectId, holders: market.holders, graduated: market.graduated });
+          // Check if current user already holds a share
+          const holds = await checkHolderStatus(market.objectId);
+          if (isMounted) setIsHolder(holds);
+        }
+      } catch (err) {
+        console.error('Failed to fetch market info:', err);
+      }
+    };
+
+    fetchMarketInfo();
+    return () => {
+      isMounted = false;
+    };
+  }, [fullProfile?.wallet_address, findMarketByOwner, checkHolderStatus]);
 
   // Check follow status when component mounts or user changes
   useEffect(() => {
@@ -107,12 +174,75 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user }) => {
     }
   }, [user.id, currentUser?.id]);
 
-  // Handle buy share action (placeholder - requires on-chain transaction in Phase 2)
-  const handleBuyShare = useCallback(async () => {
-    // TODO: Implement on-chain share purchase transaction
-    // This will affect holder count and share price via bonding curve
-    setFollowError('Share trading coming soon');
-  }, []);
+  const handleCommentCountChange = (postId: string, count: number) => {
+    setPosts((prev) =>
+      prev.map((post) => (post.id === postId ? { ...post, comments_count: count } : post))
+    );
+  };
+
+  // Handle opening the buy share dialog
+  const handleBuyShareClick = useCallback(() => {
+    if (!currentAccount) {
+      setFollowError('Please connect your wallet to buy shares');
+      return;
+    }
+    if (isHolder) {
+      setFollowError('You already hold a share in this market');
+      return;
+    }
+    if (holdersCount >= MAX_SUPPLY) {
+      setFollowError(`Market is sold out (max ${MAX_SUPPLY} holders)`);
+      return;
+    }
+    if (shareLoading) {
+      setFollowError('Loading market info, please wait...');
+      return;
+    }
+    if (!marketInfo) {
+      setFollowError('Market not found. The user may not have created a market yet.');
+      return;
+    }
+    setFollowError(null);
+    setPurchaseError(null);
+    setBuyDialogOpen(true);
+  }, [currentAccount, marketInfo, holdersCount, shareLoading, isHolder]);
+
+  // Handle actual share purchase via smart contract
+  const handleConfirmPurchase = useCallback(async () => {
+    if (!marketInfo || isPurchasing) return;
+
+    setIsPurchasing(true);
+    setPurchaseError(null);
+
+    try {
+      const result = await buyShare(marketInfo.objectId, holdersCount);
+
+      if (result.success) {
+        setPurchaseSuccessful(true);
+        setPurchaseTxDigest(result.txDigest);
+        setIsHolder(true);
+        // Update local holder count
+        const newHolders = holdersCount + 1;
+        setMarketInfo(prev => prev ? { ...prev, holders: prev.holders + 1 } : null);
+        if (newHolders >= GRADUATION_THRESHOLD && holdersCount < GRADUATION_THRESHOLD) {
+          showSuccess(`@${user.username} just hit the graduation threshold! Token launch is now available.`);
+        } else {
+          showSuccess(`Successfully purchased a share of @${user.username}!`);
+        }
+      } else {
+        const errorMsg = result.error || 'Transaction failed';
+        setPurchaseError(errorMsg);
+        showError(errorMsg);
+      }
+    } catch (err: any) {
+      console.error('Purchase failed:', err);
+      const errorMsg = err.message || 'Failed to purchase share';
+      setPurchaseError(errorMsg);
+      showError(errorMsg);
+    } finally {
+      setIsPurchasing(false);
+    }
+  }, [marketInfo, isPurchasing, buyShare, holdersCount, user.username, showSuccess, showError]);
 
   // Fetch full profile data
   useEffect(() => {
@@ -180,7 +310,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user }) => {
           </Avatar>
           <div className="flex-1">
             <h1 className="text-xl font-semibold text-gray-900">{displayName}</h1>
-            {showHandle && <p className="text-sm text-gray-500">@{user.username}</p>}
             {fullProfile?.wallet_address && (
               <p className="mt-1 font-mono text-xs text-gray-400 tracking-wide">
                 {fullProfile.wallet_address.slice(0, 6)}
@@ -202,17 +331,59 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user }) => {
         <div className="mt-4 flex items-center gap-6 text-sm">
           <div>
             <span className="font-semibold text-gray-900">{holdersCount}</span>
-            <span className="ml-1 text-gray-500">holders</span>
+            <span className="ml-1 text-gray-500">{isGraduated ? 'token holders' : 'holders'}</span>
           </div>
           <div>
-            <span className="font-semibold text-cyan-600">{sharePrice} SUI</span>
-            <span className="ml-1 text-gray-500">/ share</span>
+            <span className="font-semibold text-cyan-600">{sharePrice}</span>
+            <span className="ml-1 text-gray-500">/ {isGraduated ? 'token' : 'share'}</span>
           </div>
           <div>
             <span className="font-semibold text-gray-900">{posts.length}</span>
             <span className="ml-1 text-gray-500">posts</span>
           </div>
         </div>
+
+        {/* Single token symbol entry point */}
+        {isGraduated && (
+          <div className="mt-3">
+            {canTradeToken ? (
+              <button
+                onClick={handleOpenTrade}
+                className="inline-flex items-center rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700 transition-colors hover:bg-cyan-100"
+              >
+                ${activeTokenSymbol}
+              </button>
+            ) : (
+              <span className="inline-flex items-center rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">
+                ${activeTokenSymbol}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Graduation progress */}
+        {!isGraduated && (
+          <div className="mt-3">
+            <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+              <span>Token graduation</span>
+              <span>{holdersCount}/{GRADUATION_THRESHOLD}</span>
+            </div>
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-500"
+                style={{ width: `${graduationProgressPercent(holdersCount)}%` }}
+              />
+            </div>
+            {phase === 'graduating' && (
+              <div className="mt-2 flex items-center gap-2 rounded-md bg-purple-50 border border-purple-200 px-3 py-2">
+                <Rocket className="w-3.5 h-3.5 text-purple-600 flex-shrink-0" />
+                <span className="text-xs text-purple-700">
+                  Graduation threshold reached — awaiting token launch.
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Action Buttons - only show for non-own profile when logged in */}
         {!isOwnProfile && currentUser && (
@@ -241,20 +412,22 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user }) => {
                   </>
                 )}
               </button>
-              <button
-                onClick={handleBuyShare}
-                disabled={actionLoading}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-purple-200 text-purple-600 hover:bg-purple-50 hover:border-purple-300 transition-colors disabled:opacity-50"
-              >
-                {actionLoading ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <>
-                    <ShoppingCart className="w-3 h-3" />
-                    Buy Share
-                  </>
-                )}
-              </button>
+              {canBuyShare && (
+                <button
+                  onClick={handleBuyShareClick}
+                  disabled={actionLoading || isPurchasing}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600 transition-colors disabled:opacity-50"
+                >
+                  {shareLoading ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <>
+                      <ShoppingCart className="w-3 h-3" />
+                      Buy Share ({sharePrice} SUI)
+                    </>
+                  )}
+                </button>
+              )}
             </div>
             {followError && (
               <p className="text-xs text-red-500">{followError}</p>
@@ -281,7 +454,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user }) => {
               author: {
                 id: post.author_id,
                 username: post.author.username,
-                displayName: post.author.display_name,
+                // Phase 1: username is the single display identifier
                 avatarUrl: post.author.avatar_url,
                 bio: post.author.bio,
                 tokenSymbol: post.author.token_symbol,
@@ -296,10 +469,41 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user }) => {
               media: mediaUrls.map((url) => ({ type: inferMediaType(url), url })),
             };
 
-            return <FeedPostCard key={post.id} post={feedPost} tone="light" />;
+            return (
+              <FeedPostCard
+                key={post.id}
+                post={feedPost}
+                tone="light"
+                currentUserId={currentUser?.id}
+                currentUsername={currentUser?.username}
+                currentAvatarUrl={currentUser?.avatar_url}
+                onCommentCountChange={handleCommentCountChange}
+              />
+            );
           })
         )}
       </div>
+
+      {/* Buy Share Confirmation Dialog */}
+      <BuyShareDialog
+        open={buyDialogOpen}
+        onOpenChange={(open) => {
+          setBuyDialogOpen(open);
+          if (!open) {
+            setPurchaseSuccessful(false);
+            setPurchaseTxDigest(undefined);
+          }
+        }}
+        targetUsername={user.username}
+        targetAvatarUrl={fullProfile?.avatar_url}
+        currentHolders={holdersCount}
+        onConfirm={handleConfirmPurchase}
+        isPurchasing={isPurchasing}
+        error={purchaseError}
+        graduationState={graduationState ?? undefined}
+        purchaseSuccess={purchaseSuccessful}
+        txDigest={purchaseTxDigest}
+      />
     </div>
   );
 };

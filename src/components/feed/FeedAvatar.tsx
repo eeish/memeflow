@@ -2,6 +2,7 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '../ui-simple/Avatar';
 import type { FeedAuthor, FeedTone } from './types';
 import { HoverProfileCard } from './HoverProfileCard';
+import type { TradePageContext } from '../../types/trade';
 
 interface FeedAvatarProps {
   author: FeedAuthor;
@@ -11,6 +12,7 @@ interface FeedAvatarProps {
   holdersCount?: number;
   onBuyClick?: (author: FeedAuthor) => void;
   onClick?: () => void;
+  onOpenTrade?: (market: TradePageContext) => void;
 }
 
 const HOVER_DELAY = 100; // ms delay before closing to allow mouse to move to card
@@ -23,6 +25,7 @@ export const FeedAvatar: React.FC<FeedAvatarProps> = ({
   holdersCount,
   onBuyClick,
   onClick,
+  onOpenTrade,
 }) => {
   const [imageError, setImageError] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
@@ -103,7 +106,7 @@ export const FeedAvatar: React.FC<FeedAvatarProps> = ({
     >
       <Avatar className={className}>
         {author.avatarUrl && !imageError ? (
-          <AvatarImage src={author.avatarUrl} alt={author.displayName || author.username} onError={() => setImageError(true)} />
+          <AvatarImage src={author.avatarUrl} alt={author.username} onError={() => setImageError(true)} />
         ) : (
           <AvatarFallback className={fallbackClassName}>{fallbackChar}</AvatarFallback>
         )}
@@ -117,6 +120,7 @@ export const FeedAvatar: React.FC<FeedAvatarProps> = ({
         onMouseEnter={handleCardMouseEnter}
         onMouseLeave={handleCardMouseLeave}
         onBuyClick={onBuyClick}
+        onOpenTrade={onOpenTrade}
       />
     </div>
   );

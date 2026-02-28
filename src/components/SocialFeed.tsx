@@ -91,6 +91,12 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
     }
   };
 
+  const handleCommentCountChange = (postId: string, count: number) => {
+    setPosts((prev) =>
+      prev.map((post) => (post.id === postId ? { ...post, comments_count: count } : post))
+    );
+  };
+
   const handleLike = async (postId: string) => {
     if (!user?.id) return;
     
@@ -199,7 +205,6 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
             author: {
               id: post.author_id,
               username: post.author.username,
-              displayName: post.author.display_name,
               avatarUrl: post.author.avatar_url,
               bio: post.author.bio,
               tokenSymbol: post.author.token_symbol,
@@ -241,6 +246,10 @@ export const SocialFeed: React.FC<SocialFeedProps> = ({ user }) => {
               }
               onLike={() => handleLike(post.id)}
               isLiked={isLiked}
+              currentUserId={user?.id}
+              currentUsername={user?.username}
+              currentAvatarUrl={user?.avatar_url}
+              onCommentCountChange={handleCommentCountChange}
               bodyExtra={
                 tokenMention ? (
                   <Card className="glass border border-white/10 p-3 mb-4 bg-gradient-to-r from-cyan-500/10 to-pink-500/10">

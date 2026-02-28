@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // ============================================================================
@@ -12,7 +12,6 @@ pub struct User {
     pub wallet_address: Option<String>,
     pub email: Option<String>,
     pub username: String,
-    pub display_name: Option<String>,
     pub avatar_url: Option<String>,
     pub bio: Option<String>,
     pub token_symbol: String,
@@ -28,7 +27,6 @@ pub struct CreateUserRequest {
     pub wallet_address: Option<String>,
     pub email: Option<String>,
     pub username: String,
-    pub display_name: Option<String>,
     pub bio: Option<String>,
     pub avatar_url: Option<String>,
 }
@@ -37,7 +35,6 @@ pub struct CreateUserRequest {
 pub struct UserProfile {
     pub id: Uuid,
     pub username: String,
-    pub display_name: Option<String>,
     pub avatar_url: Option<String>,
     pub token_symbol: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,6 +43,36 @@ pub struct UserProfile {
     pub bio: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub followers_count: Option<i64>,
+}
+
+// ============================================================================
+// Notification Types
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Notification {
+    pub id: String,
+    pub user_id: String,
+    pub content: String,
+    pub notification_type: String,
+    pub status: String, // pending | sent | failed | read
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_avatar_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateNotificationRequest {
+    pub user_id: String,
+    pub content: String,
 }
 
 // ============================================================================
@@ -114,6 +141,36 @@ pub struct VerifyPostHashResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LikeRequest {
     pub user_id: String,
+}
+
+// ============================================================================
+// Comment Types
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Comment {
+    pub id: Uuid,
+    pub post_id: Uuid,
+    pub user_id: Uuid,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_comment_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommentWithAuthor {
+    #[serde(flatten)]
+    pub comment: Comment,
+    pub author: UserProfile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateCommentRequest {
+    pub user_id: String,
+    pub content: String,
+    pub parent_comment_id: Option<String>,
+    pub reply_to_user_id: Option<String>,
 }
 
 // ============================================================================

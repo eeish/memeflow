@@ -3,13 +3,13 @@
 # this file should not be committed to source control
 
 build-env = "devnet"
-chain-id = "3ac83284"
+chain-id = "a63d14dc"
 
 [[published]]
 source = { local = "/home/leo/repo/psui/contract/contracts/cord" }
-published-at = "0xfb3bc2fe2c121fad047cb53b134aa8280edf1cee1b74f6efcd70d21d6604d385"
-original-id = "0xfb3bc2fe2c121fad047cb53b134aa8280edf1cee1b74f6efcd70d21d6604d385"
+published-at = "0x85e060fb8b1e83065f6c95fa367f3a0a666987e5a6e70aecb1c05cd89671e11f"
+original-id = "0x85e060fb8b1e83065f6c95fa367f3a0a666987e5a6e70aecb1c05cd89671e11f"
 version = 1
 toolchain-version = "1.64.0"
 build-config = { flavor = "sui", edition = "2024" }
-upgrade-capability = "0x5e90214088d93910ca5203d8154dc67d5b3007d5fe77f6e0556d2d3309de3961"
+upgrade-capability = "0x1f0b37b7a828ee0274f62052a8ccb5c181b860e1064164f70523b974fb0bcf61"

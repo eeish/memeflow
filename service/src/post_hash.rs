@@ -31,13 +31,21 @@ use sha2::{Digest, Sha256};
 ///
 /// # Returns
 /// 32-byte SHA256 hash as a hex string (without 0x prefix)
-pub fn compute_content_hash(author: &str, timestamp_ms: u64, content: &str) -> Result<String, HashError> {
+pub fn compute_content_hash(
+    author: &str,
+    timestamp_ms: u64,
+    content: &str,
+) -> Result<String, HashError> {
     let hash_bytes = compute_content_hash_bytes(author, timestamp_ms, content)?;
     Ok(hex::encode(hash_bytes))
 }
 
 /// Compute the content hash as raw bytes.
-pub fn compute_content_hash_bytes(author: &str, timestamp_ms: u64, content: &str) -> Result<[u8; 32], HashError> {
+pub fn compute_content_hash_bytes(
+    author: &str,
+    timestamp_ms: u64,
+    content: &str,
+) -> Result<[u8; 32], HashError> {
     // Parse and validate author address
     let author_bytes = parse_sui_address(author)?;
 
@@ -157,8 +165,10 @@ mod tests {
 
     #[test]
     fn test_address_without_prefix() {
-        let author_with_prefix = "0xace72a80e389bea3668bbe54bd4677bdef5c4b88d34eb553b7331643ceada5c5";
-        let author_without_prefix = "ace72a80e389bea3668bbe54bd4677bdef5c4b88d34eb553b7331643ceada5c5";
+        let author_with_prefix =
+            "0xace72a80e389bea3668bbe54bd4677bdef5c4b88d34eb553b7331643ceada5c5";
+        let author_without_prefix =
+            "ace72a80e389bea3668bbe54bd4677bdef5c4b88d34eb553b7331643ceada5c5";
         let timestamp_ms = 1700000000000u64;
         let content = "Test";
 

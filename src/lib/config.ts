@@ -55,7 +55,7 @@ export const DEPLOYMENT_CONFIG = {
 
 // Default network (set by deployment script)
 export const CURRENT_NETWORK = (
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUI_NETWORK) || 
+  (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_SUI_NETWORK || import.meta.env?.VITE_NETWORK)) ||
   'testnet'
 ) as keyof typeof DEPLOYMENT_CONFIG;
 

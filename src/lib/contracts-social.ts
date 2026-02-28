@@ -4,21 +4,29 @@
  * This module provides TypeScript interfaces and functions for interacting
  * with Cord social contracts on the Sui blockchain.
  */
-
-import { SuiClient } from '@mysten/sui.js/client';
-import { TransactionBlock } from '@mysten/sui.js/transactions';
-
 // ===== Types and Interfaces =====
 
 export interface CordDeployment {
   network: string;
   rpcUrl: string;
   packageId: string;
+  /** Original package ID from first deployment - use for querying existing objects */
+  originalPackageId?: string;
+  /** UpgradeCap object ID - required for future upgrades */
+  upgradeCapId?: string;
+  /** Shared GraduationRegistry object ID for Phase 2 launch transactions */
+  graduationRegistryId?: string;
+  /** Maximum holder slots in Phase 1 market. */
+  maxSupply?: number;
+  /** Holders threshold required to launch (derived from maxSupply). */
+  graduationThreshold?: number;
   profileRegistryId: string;
   factoryId: string;
   deploymentTx: string;
   timestamp: string;
   deployer: string;
+  /** Number of times the package has been upgraded */
+  upgradeCount?: number;
 }
 
 export interface SocialProfile {
@@ -32,6 +40,14 @@ export interface SocialProfile {
   createdAt: string;
 }
 
+function parseMaxSupply(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 2;
+  const normalized = Math.floor(parsed);
+  if (normalized < 2) return 2;
+  return normalized;
+}
+
 // ===== Utility Functions =====
 
 /**
@@ -40,37 +56,25 @@ export interface SocialProfile {
 export async function loadDeployment(network: string): Promise<CordDeployment | null> {
   try {
     // Try to load from public deployment file
-    const response = await fetch(`/deployment-${network}.json`);
+    const cacheBuster = Date.now();
+    const response = await fetch(`/deployment-${network}.json?ts=${cacheBuster}`, {
+      cache: 'no-store',
+    });
     if (!response.ok) {
       console.warn(`Deployment file not found for network: ${network}`);
-      
-      // Fallback to environment variables
-      const packageId = import.meta.env.VITE_PACKAGE_ID;
-      const profileRegistryId = import.meta.env.VITE_PROFILE_REGISTRY_ID;
-      const factoryId = import.meta.env.VITE_FACTORY_ID;
-      
-      if (packageId && profileRegistryId) {
-        return {
-          network,
-          rpcUrl: network === 'devnet' 
-            ? 'https://fullnode.devnet.sui.io:443'
-            : 'https://fullnode.testnet.sui.io:443',
-          packageId,
-          profileRegistryId,
-          factoryId: factoryId || '',
-          deploymentTx: '',
-          timestamp: new Date().toISOString(),
-          deployer: ''
-        };
-      }
-      
       return null;
     }
     
     const data = await response.json();
+    const maxSupply = parseMaxSupply(data.maxSupply ?? data.max_supply);
     return {
       ...data,
-      profileRegistryId: data.profileRegistryId || data.profileRegistryId,
+      // Use originalPackageId if available (for upgraded packages), otherwise use packageId
+      originalPackageId: data.originalPackageId || data.packageId,
+      graduationRegistryId: data.graduationRegistryId || data.graduation_registry_id || '',
+      maxSupply,
+      graduationThreshold: maxSupply,
+      profileRegistryId: data.profileRegistryId || data.profile_registry_id,
       factoryId: data.factoryId || data.factory_id || ''
     };
   } catch (error) {

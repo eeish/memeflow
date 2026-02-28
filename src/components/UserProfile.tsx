@@ -43,7 +43,6 @@ export const UserProfile: React.FC<UserProfileProps> = ({ username, onBack }) =>
       const mockProfile = {
         id: `user_${username}`,
         username: username,
-        display_name: username.charAt(0).toUpperCase() + username.slice(1),
         avatar_url: null,
         bio: `Creator of innovative meme tokens. Building the future of social finance.`,
         location: 'Web3 Universe',
@@ -146,12 +145,8 @@ export const UserProfile: React.FC<UserProfileProps> = ({ username, onBack }) =>
           )}
           <div className="flex items-baseline gap-2">
             <h2 className="text-2xl font-bold text-gray-900">
-              {profileData.display_name || `@${profileData.username}`}
+              @{profileData.username}
             </h2>
-            {profileData.display_name &&
-              profileData.display_name.toLowerCase() !== profileData.username.toLowerCase() && (
-                <span className="text-sm text-gray-500">@{profileData.username}</span>
-              )}
           </div>
         </div>
       </div>
@@ -171,7 +166,7 @@ export const UserProfile: React.FC<UserProfileProps> = ({ username, onBack }) =>
           <div className="flex-1">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-3">
-                <h1 className="text-2xl font-bold text-gray-900">{profileData.display_name}</h1>
+                <h1 className="text-2xl font-bold text-gray-900">@{profileData.username}</h1>
                 <Badge className="bg-gradient-to-r from-blue-500 to-purple-500 text-white">
                   Token Creator
                 </Badge>

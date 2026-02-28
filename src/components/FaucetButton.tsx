@@ -3,12 +3,15 @@ import { Button } from './ui-simple/Button';
 import { Coins } from './ui-simple/Icons';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { useNotifications } from '../contexts/NotificationContext';
+import { CURRENT_NETWORK, NETWORKS, getTxUrl } from '../lib/config';
 
 export const FaucetButton: React.FC = () => {
   const account = useCurrentAccount();
   const notifications = useNotifications();
   const [loading, setLoading] = useState(false);
-  
+
+  const faucetBase = NETWORKS[CURRENT_NETWORK].faucet;
+
   const requestFromFaucet = async () => {
     if (!account) {
       notifications.warning('Please connect your wallet first', {
@@ -16,15 +19,22 @@ export const FaucetButton: React.FC = () => {
       });
       return;
     }
-    
+
+    if (!faucetBase) {
+      notifications.error('Faucet is not available on this network', {
+        display: 'toast'
+      });
+      return;
+    }
+
     setLoading(true);
     notifications.info('Requesting SUI from faucet...', {
       display: 'toast',
       duration: 2000
     });
-    
+
     try {
-      const response = await fetch('https://faucet.devnet.sui.io/v1/gas', {
+      const response = await fetch(`${faucetBase}/v1/gas`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -35,7 +45,7 @@ export const FaucetButton: React.FC = () => {
           },
         }),
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         notifications.success(`Successfully received SUI from faucet!`, {
@@ -43,7 +53,7 @@ export const FaucetButton: React.FC = () => {
           metadata: { txId: data.task },
           actions: [{
             label: 'View TX',
-            action: () => window.open(`https://suiscan.xyz/devnet/tx/${data.task}`, '_blank'),
+            action: () => window.open(getTxUrl(data.task), '_blank'),
             variant: 'primary'
           }]
         });
@@ -63,11 +73,11 @@ export const FaucetButton: React.FC = () => {
       setLoading(false);
     }
   };
-  
+
   return (
     <div className="space-y-2">
-      <Button 
-        onClick={requestFromFaucet} 
+      <Button
+        onClick={requestFromFaucet}
         disabled={loading || !account}
         className="bg-blue-600 hover:bg-blue-700"
       >

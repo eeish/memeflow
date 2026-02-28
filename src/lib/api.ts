@@ -7,7 +7,6 @@ export interface User {
   wallet_address?: string;
   email?: string;
   username: string;
-  display_name?: string;
   avatar_url?: string;
   bio?: string;
   token_symbol: string;
@@ -21,7 +20,6 @@ export interface User {
 export interface UserProfile {
   id: string;
   username: string;
-  display_name?: string;
   avatar_url?: string;
   token_symbol: string;
   wallet_address?: string;
@@ -88,14 +86,36 @@ export interface PostWithAuthor {
   author: UserProfile;
 }
 
+export interface Comment {
+  id: string;
+  post_id: string;
+  user_id: string;
+  content: string;
+  parent_comment_id?: string | null;
+  created_at: string;
+}
+
+export interface CommentWithAuthor {
+  id: string;
+  post_id: string;
+  user_id: string;
+  content: string;
+  parent_comment_id?: string | null;
+  created_at: string;
+  author: UserProfile;
+}
+
 export interface Notification {
   id: string;
   user_id: string;
-  title: string;
   content: string;
-  notification_type: 'like' | 'comment' | 'follow' | 'mention' | 'token_update';
+  notification_type: string;
+  status: 'pending' | 'sent' | 'failed' | 'read';
   related_id?: string;
-  is_read: boolean;
+  detail?: string;
+  actor_id?: string;
+  actor_username?: string;
+  actor_avatar_url?: string;
   created_at: string;
 }
 
@@ -125,6 +145,16 @@ export interface ApiResponse<T> {
   data?: T;
   error?: string;
   message?: string;
+}
+
+export interface CreatorTokenBuildResponse {
+  package_name: string;
+  module_name: string;
+  type_name: string;
+  token_name: string;
+  token_symbol: string;
+  modules: string[];
+  dependencies: string[];
 }
 
 class ApiService {
@@ -166,7 +196,6 @@ class ApiService {
     wallet_address?: string;
     email?: string;
     username: string;
-    display_name?: string;
     bio?: string;
     avatar_url?: string;
   }): Promise<ApiResponse<User>> {
@@ -176,8 +205,26 @@ class ApiService {
     });
   }
 
+  async buildCreatorTokenPackage(payload: {
+    owner_address: string;
+    token_name: string;
+    token_symbol: string;
+    auth_nonce: string;
+    auth_timestamp_ms: number;
+    auth_signature: string;
+  }): Promise<ApiResponse<CreatorTokenBuildResponse>> {
+    return this.request<CreatorTokenBuildResponse>('/creator-token/build', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async getUser(userId: string): Promise<ApiResponse<User>> {
     return this.request<User>(`/users/${userId}`);
+  }
+
+  async getUserByAddress(walletAddress: string): Promise<ApiResponse<User>> {
+    return this.request<User>(`/users/by-address/${walletAddress}`);
   }
 
   async updateUserProfile(userId: string, profileData: {
@@ -198,6 +245,26 @@ class ApiService {
   // Post endpoints
   async getPosts(limit = 20, offset = 0): Promise<ApiResponse<PostWithAuthor[]>> {
     return this.request<PostWithAuthor[]>(`/posts?limit=${limit}&offset=${offset}`);
+  }
+
+  // Comment endpoints
+  async getPostComments(postId: string, limit = 50, offset = 0): Promise<ApiResponse<CommentWithAuthor[]>> {
+    return this.request<CommentWithAuthor[]>(`/posts/${postId}/comments?limit=${limit}&offset=${offset}`);
+  }
+
+  async createComment(
+    postId: string,
+    commentData: {
+      user_id: string;
+      content: string;
+      parent_comment_id?: string | null;
+      reply_to_user_id?: string | null;
+    }
+  ): Promise<ApiResponse<CommentWithAuthor>> {
+    return this.request<CommentWithAuthor>(`/posts/${postId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify(commentData),
+    });
   }
 
   /**
@@ -235,6 +302,13 @@ class ApiService {
   async likePost(postId: string, userId: string): Promise<ApiResponse<boolean>> {
     return this.request<boolean>(`/posts/${postId}/like`, {
       method: 'POST',
+      body: JSON.stringify({ user_id: userId }),
+    });
+  }
+
+  async deletePost(postId: string, userId: string): Promise<ApiResponse<boolean>> {
+    return this.request<boolean>(`/posts/${postId}`, {
+      method: 'DELETE',
       body: JSON.stringify({ user_id: userId }),
     });
   }
@@ -283,6 +357,12 @@ class ApiService {
 
   async markNotificationRead(notificationId: string): Promise<ApiResponse<string>> {
     return this.request<string>(`/notifications/${notificationId}/mark-read`, {
+      method: 'POST',
+    });
+  }
+
+  async markAllNotificationsRead(userId: string): Promise<ApiResponse<string>> {
+    return this.request<string>(`/notifications/${userId}/mark-all-read`, {
       method: 'POST',
     });
   }

@@ -35,15 +35,19 @@
 
     <!-- Fullscreen app styles -->
     <style>
-      html, body, #root {
+      html, body {
         height: 100%;
         margin: 0;
         padding: 0;
-        overflow: hidden;
+      }
+      #root {
+        min-height: 100%;
       }
       /* iOS safe area support */
       body {
         padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        overflow-y: auto;
+        overflow-x: hidden;
       }
     </style>
   </head>

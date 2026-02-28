@@ -5,18 +5,77 @@ import { InlineNotification } from './InlineNotification';
 import { BannerNotification } from './BannerNotification';
 import { Settings } from '../ui-simple/Icons';
 import { cn } from '../../lib/utils';
+import { useAuth } from '../AuthProvider';
+
+interface WsNotificationPayload {
+  id: string;
+  user_id: string;
+  content: string;
+  notification_type: string;
+  created_at: string;
+}
 
 export const NotificationContainer: React.FC = () => {
-  const notifications = useNotifications();
+  const notificationApi = useNotifications();
+  const { user } = useAuth();
 
   // Set global context for external access
   useEffect(() => {
-    setGlobalNotificationContext(notifications);
-  }, [notifications]);
+    setGlobalNotificationContext(notificationApi);
+  }, [notificationApi]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let closedByUser = false;
+    const seenMessageIds = new Set<string>();
+
+    const connect = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${protocol}://${window.location.hostname}:3001/ws/notifications/${user.id}`);
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data) as WsNotificationPayload;
+          if (seenMessageIds.has(payload.id)) return;
+          seenMessageIds.add(payload.id);
+
+          notificationApi.info(payload.content, {
+            title: 'New Notification',
+            display: 'toast',
+            category: 'general',
+            duration: 5000,
+            metadata: payload,
+          });
+        } catch (error) {
+          console.error('Failed to parse notification payload:', error);
+        }
+      };
+
+      ws.onclose = () => {
+        if (closedByUser) return;
+        reconnectTimer = window.setTimeout(connect, 2500);
+      };
+    };
+
+    connect();
+
+    return () => {
+      closedByUser = true;
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    };
+  }, [user?.id, notificationApi.info]);
 
   // Filter notifications by display type
-  const toasts = notifications.notifications.filter(n => n.display === 'toast');
-  const banners = notifications.notifications.filter(n => n.display === 'banner');
+  const toasts = notificationApi.notifications.filter(n => n.display === 'toast');
+  const banners = notificationApi.notifications.filter(n => n.display === 'banner');
 
   return (
     <>
@@ -26,7 +85,7 @@ export const NotificationContainer: React.FC = () => {
           <div key={notification.id} className="pointer-events-auto">
             <ToastNotification
               notification={notification}
-              onDismiss={notifications.dismiss}
+              onDismiss={notificationApi.dismiss}
             />
           </div>
         ))}
@@ -37,7 +96,7 @@ export const NotificationContainer: React.FC = () => {
         <BannerNotification
           key={notification.id}
           notification={notification}
-          onDismiss={notifications.dismiss}
+          onDismiss={notificationApi.dismiss}
           position="top"
         />
       ))}

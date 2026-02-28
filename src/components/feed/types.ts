@@ -3,7 +3,6 @@ export type FeedTone = 'light' | 'dark';
 export interface FeedAuthor {
   id?: string;
   username: string;
-  displayName?: string;
   avatarUrl?: string | null;
   bio?: string | null;
   tokenSymbol?: string;
@@ -11,6 +10,8 @@ export interface FeedAuthor {
   followersCount?: number;
   holdersCount?: number;
   followingCount?: number;
+  isGraduated?: boolean;
+  tokenName?: string;
 }
 
 export interface FeedMediaItem {
