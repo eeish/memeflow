@@ -79,8 +79,18 @@ export const BuyShareDialog: React.FC<BuyShareDialogProps> = ({
     await onConfirm();
   };
 
+  // Prevent the backdrop from closing the dialog while a purchase is in
+  // progress or while the success screen is visible.  The wallet popup
+  // dismiss event can propagate to the backdrop and call onOpenChange(false)
+  // before React has a chance to render the success state, resetting it
+  // immediately and hiding the confirmation screen.
+  const handleOpenChange = (newOpen: boolean) => {
+    if (!newOpen && (isPurchasing || purchaseSuccess)) return;
+    onOpenChange(newOpen);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="bg-white max-w-md">
         {purchaseSuccess ? (
           <>

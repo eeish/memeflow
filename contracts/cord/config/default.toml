@@ -1,0 +1,3 @@
+[phase1]
+# Maximum share holders allowed in Phase 1 before buy-side is capped.
+max_supply = 30

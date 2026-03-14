@@ -30,14 +30,12 @@ export const ProfileSetupFlow: React.FC<ProfileSetupFlowProps> = ({
       setProfileError(null);
 
       if (!skipOnChain) {
-        console.log('🚀 Creating on-chain profile...');
-
-        // Create on-chain profile with username (token name) only
+        // createProfile calls share_market::create_market internally — one wallet popup, one tx
+        console.log('🚀 Creating on-chain profile and share market...');
         await createProfile(userData.username);
-
-        console.log('✅ On-chain profile created successfully');
+        console.log('✅ On-chain profile and share market created successfully');
       } else {
-        console.log('⏭️ Skipping on-chain profile creation for zkLogin user');
+        console.log('⏭️ Skipping on-chain setup for zkLogin user');
       }
 
       // Profile created successfully, proceed with backend creation
@@ -45,7 +43,13 @@ export const ProfileSetupFlow: React.FC<ProfileSetupFlowProps> = ({
 
     } catch (error: any) {
       console.error('❌ Failed to create on-chain profile:', error);
-      setProfileError(error.message || 'Failed to create on-chain profile. Please try again.');
+      const msg: string = error.message || '';
+      const isInsufficientBalance = msg.toLowerCase().includes('insufficient') || msg.toLowerCase().includes('balance');
+      setProfileError(
+        isInsufficientBalance
+          ? 'Insufficient SUI balance. Get testnet SUI from the faucet at faucet.testnet.sui.io, then try again.'
+          : msg || 'Failed to create on-chain profile. Please try again.'
+      );
     } finally {
       setIsCreatingProfile(false);
     }

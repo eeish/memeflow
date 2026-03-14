@@ -111,7 +111,7 @@ export function Profile({ user, onClose, onEditProfile, onOpenTrade }: ProfilePr
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const [purchaseSuccessful, setPurchaseSuccessful] = useState(false);
   const [purchaseTxDigest, setPurchaseTxDigest] = useState<string | undefined>(undefined);
-  const [marketInfo, setMarketInfo] = useState<{ objectId: string; holders: number; graduated: boolean } | null>(null);
+  const [marketInfo, setMarketInfo] = useState<{ objectId: string; holders: number; graduated: boolean; packageId: string } | null>(null);
   const [isHolder, setIsHolder] = useState(false);
 
   // Graduation state
@@ -200,7 +200,7 @@ export function Profile({ user, onClose, onEditProfile, onOpenTrade }: ProfilePr
         const market = await findMarketByOwner(user.wallet_address);
         if (!isMounted) return;
         if (market) {
-          setMarketInfo({ objectId: market.objectId, holders: market.holders, graduated: market.graduated });
+          setMarketInfo({ objectId: market.objectId, holders: market.holders, graduated: market.graduated, packageId: market.packageId });
           const holds = await checkHolderStatus(market.objectId);
           if (isMounted) setIsHolder(holds);
         }
@@ -288,7 +288,7 @@ export function Profile({ user, onClose, onEditProfile, onOpenTrade }: ProfilePr
     setPurchaseError(null);
 
     try {
-      const result = await buyShare(marketInfo.objectId, holderCount);
+      const result = await buyShare(marketInfo.objectId, holderCount, marketInfo.packageId);
 
       if (result.success) {
         setPurchaseSuccessful(true);
@@ -408,6 +408,8 @@ export function Profile({ user, onClose, onEditProfile, onOpenTrade }: ProfilePr
                       tokenSymbol: activeTokenSymbol,
                       username: user.username,
                       creatorAddress: user.wallet_address,
+                      tokenType: graduationState?.tokenType,
+                      poolId: graduationState?.poolId,
                       source: 'profile',
                     })
                   }

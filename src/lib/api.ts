@@ -247,6 +247,11 @@ class ApiService {
     return this.request<PostWithAuthor[]>(`/posts?limit=${limit}&offset=${offset}`);
   }
 
+  // Plaza global feed (public timeline, newest-first)
+  async getPlazaPosts(limit = 20, offset = 0): Promise<ApiResponse<PostWithAuthor[]>> {
+    return this.request<PostWithAuthor[]>(`/plaza?limit=${limit}&offset=${offset}`);
+  }
+
   // Comment endpoints
   async getPostComments(postId: string, limit = 50, offset = 0): Promise<ApiResponse<CommentWithAuthor[]>> {
     return this.request<CommentWithAuthor[]>(`/posts/${postId}/comments?limit=${limit}&offset=${offset}`);

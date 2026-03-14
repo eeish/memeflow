@@ -47,7 +47,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const [purchaseSuccessful, setPurchaseSuccessful] = useState(false);
   const [purchaseTxDigest, setPurchaseTxDigest] = useState<string | undefined>(undefined);
-  const [marketInfo, setMarketInfo] = useState<{ objectId: string; holders: number; graduated: boolean } | null>(null);
+  const [marketInfo, setMarketInfo] = useState<{ objectId: string; holders: number; graduated: boolean; packageId: string } | null>(null);
   const [isHolder, setIsHolder] = useState(false);
 
   // Check if viewing own profile
@@ -57,8 +57,10 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
   const { graduationState } = useGraduation(fullProfile?.wallet_address);
   const phase = graduationState?.phase ?? 'shares';
   const isGraduated = marketInfo?.graduated || phase === 'graduated';
-  const profileTokenSymbol = (fullProfile?.token_symbol || user.token_symbol || user.username || 'TOKEN').replace('$', '').toUpperCase();
-  const activeTokenSymbol = (graduationState?.tokenSymbol || profileTokenSymbol).replace('$', '').toUpperCase();
+  // graduationState.tokenSymbol is now resolved from the on-chain vault when localStorage is
+  // absent (e.g. a viewer who is not the token launcher).  Never fall back to username —
+  // the profile's token_symbol field is an unrelated placeholder often set to the username.
+  const activeTokenSymbol = (graduationState?.tokenSymbol ?? '').replace('$', '').toUpperCase() || '…';
   const canTradeToken = !!onOpenTrade && isGraduated;
 
   // Get holders count from market info, full profile, or default to 1 (creator always holds first share)
@@ -82,9 +84,11 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
       tokenSymbol: activeTokenSymbol,
       username: user.username,
       creatorAddress: fullProfile?.wallet_address,
+      tokenType: graduationState?.tokenType,
+      poolId: graduationState?.poolId,
       source: 'profile',
     });
-  }, [onOpenTrade, canTradeToken, activeTokenSymbol, user.username]);
+  }, [onOpenTrade, canTradeToken, activeTokenSymbol, user.username, graduationState?.tokenType, graduationState?.poolId]);
 
   // Fetch market info and holder status when we have the wallet address
   useEffect(() => {
@@ -96,7 +100,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
         const market = await findMarketByOwner(fullProfile.wallet_address!);
         if (!isMounted) return;
         if (market) {
-          setMarketInfo({ objectId: market.objectId, holders: market.holders, graduated: market.graduated });
+          setMarketInfo({ objectId: market.objectId, holders: market.holders, graduated: market.graduated, packageId: market.packageId });
           // Check if current user already holds a share
           const holds = await checkHolderStatus(market.objectId);
           if (isMounted) setIsHolder(holds);
@@ -215,7 +219,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
     setPurchaseError(null);
 
     try {
-      const result = await buyShare(marketInfo.objectId, holdersCount);
+      const result = await buyShare(marketInfo.objectId, holdersCount, marketInfo.packageId);
 
       if (result.success) {
         setPurchaseSuccessful(true);

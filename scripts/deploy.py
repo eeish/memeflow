@@ -298,6 +298,20 @@ def clean_build(contract_dir: Path, network: str, *, keep_pub_file: bool = False
             pub_file.unlink()
 
 
+def sync_move_toml_package_id(contract_dir: Path, package_id: str) -> None:
+    """Keep Move.toml aligned with the deployed package for upgrades."""
+    move_toml = contract_dir / "Move.toml"
+    content = move_toml.read_text()
+
+    published_pattern = r'^(published-at\s*=\s*")[^"]*(")$'
+    address_pattern = r'^(cord\s*=\s*")[^"]*(")$'
+
+    content = re.sub(published_pattern, rf'\g<1>{package_id}\2', content, flags=re.MULTILINE)
+    content = re.sub(address_pattern, rf'\g<1>{package_id}\2', content, flags=re.MULTILINE)
+
+    move_toml.write_text(content)
+
+
 # ---------------------------------------------------------------------------
 # JSON / transaction helpers
 # ---------------------------------------------------------------------------
@@ -464,10 +478,11 @@ def upgrade_contracts(
     cmd = [
         "sui", "client", "upgrade", ".",
         "--upgrade-capability", upgrade_cap_id,
-        "--environment", network,
         "--gas-budget", str(gas_budget),
         "--json",
     ]
+    if network != "mainnet":
+        cmd[4:4] = ["--build-env", network]
 
     result = run(cmd, capture=True, check=False, cwd=contract_dir)
     data = extract_json(result)
@@ -677,6 +692,7 @@ def deploy(network: str, force_fresh: bool = False, dry_run: bool = False) -> No
                 print(f"  python scripts/deploy.py {network} --fresh")
                 sys.exit(1)
 
+        sync_move_toml_package_id(contract_dir, existing_config["packageId"])
         info(f"Upgrading package...")
         output = upgrade_contracts(contract_dir, network, upgrade_cap_id)
         deployment = parse_upgrade_output(output, existing_config)
@@ -684,6 +700,8 @@ def deploy(network: str, force_fresh: bool = False, dry_run: bool = False) -> No
         info(f"Publishing to {network}...")
         output = publish_contracts(contract_dir, network)
         deployment = parse_publish_output(output)
+
+    sync_move_toml_package_id(contract_dir, deployment["packageId"])
 
     # Get deployer
     deployer = get_active_address()

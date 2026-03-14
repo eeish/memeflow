@@ -565,23 +565,17 @@ export function PrivateComments({
 
       {/* Comments List */}
       <div className="divide-y divide-gray-50">
-        {comments.length === 0 ? (
-          <div className="py-8 text-center text-sm text-gray-400">
-            No comments yet. Be the first to share your thoughts.
-          </div>
-        ) : (
-          comments.map((comment) => (
-            <CommentItem
-              key={comment.id}
-              comment={comment}
-              viewerContext={viewerContext}
-              onLoadReplies={onLoadReplies}
-              onSelectForReply={handleSelectForReply}
-              onAuthorClick={onAuthorClick}
-              isSelected={selectedCommentId === comment.id}
-            />
-          ))
-        )}
+        {comments.map((comment) => (
+          <CommentItem
+            key={comment.id}
+            comment={comment}
+            viewerContext={viewerContext}
+            onLoadReplies={onLoadReplies}
+            onSelectForReply={handleSelectForReply}
+            onAuthorClick={onAuthorClick}
+            isSelected={selectedCommentId === comment.id}
+          />
+        ))}
       </div>
 
       {/* Global Composer */}

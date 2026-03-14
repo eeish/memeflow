@@ -110,7 +110,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
   const cardRef = useRef<HTMLDivElement | null>(null);
 
   // Market info state
-  const [marketInfo, setMarketInfo] = useState<{ objectId: string; holders: number; graduated: boolean } | null>(null);
+  const [marketInfo, setMarketInfo] = useState<{ objectId: string; holders: number; graduated: boolean; packageId: string } | null>(null);
   const [marketInfoLoading, setMarketInfoLoading] = useState(false);
   const [marketInfoFetched, setMarketInfoFetched] = useState(false);
 
@@ -194,7 +194,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
         const market = await findMarketByOwner(walletAddress);
         if (!isMounted) return;
         if (market) {
-          setMarketInfo({ objectId: market.objectId, holders: market.holders, graduated: market.graduated });
+          setMarketInfo({ objectId: market.objectId, holders: market.holders, graduated: market.graduated, packageId: market.packageId });
           const holds = await checkHolderStatus(market.objectId);
           if (isMounted) setIsHolder(holds);
         }
@@ -324,7 +324,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
     setPurchaseError(null);
 
     try {
-      const result = await buyShare(marketInfo.objectId, holdersCount);
+      const result = await buyShare(marketInfo.objectId, holdersCount, marketInfo.packageId);
 
       if (result.success) {
         setPurchaseSuccessful(true);
@@ -363,10 +363,12 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
         tokenSymbol: activeTokenSymbol,
         username: author.username,
         creatorAddress: walletAddress ?? undefined,
+        tokenType: graduationState?.tokenType,
+        poolId: graduationState?.poolId,
         source: 'feed',
       });
     },
-    [activeTokenSymbol, author.username, onOpenTrade]
+    [activeTokenSymbol, author.username, onOpenTrade, graduationState?.tokenType, graduationState?.poolId]
   );
 
   // Styling based on tone
@@ -506,29 +508,31 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
         </div>
       </div>
 
-      {/* Token symbol entry point */}
-      <div className="mt-2 flex items-center justify-between">
-        <span className={`text-xs uppercase tracking-wide ${mutedTextClass}`}>Token</span>
-        {canTradeToken ? (
-          <button
-            onClick={handleOpenTrade}
-            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone === 'dark' ? 'bg-white/10 text-cyan-300 hover:bg-white/20' : 'bg-cyan-50 text-cyan-700 hover:bg-cyan-100'}`}
-          >
-            ${activeTokenSymbol}
-          </button>
-        ) : (
-          <div className="flex items-center gap-2">
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone === 'dark' ? 'bg-white/10 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}>
+      {/* Token symbol entry point — only shown after graduation threshold is reached */}
+      {(isGraduated || phase === 'graduating') && (
+        <div className="mt-2 flex items-center justify-between">
+          <span className={`text-xs uppercase tracking-wide ${mutedTextClass}`}>Token</span>
+          {canTradeToken ? (
+            <button
+              onClick={handleOpenTrade}
+              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone === 'dark' ? 'bg-white/10 text-cyan-300 hover:bg-white/20' : 'bg-cyan-50 text-cyan-700 hover:bg-cyan-100'}`}
+            >
               ${activeTokenSymbol}
-            </span>
-            {phase === 'graduating' && !isGraduated && (
-              <span className={`text-[10px] font-medium ${tone === 'dark' ? 'text-amber-300' : 'text-amber-700'}`}>
-                Pending launch
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone === 'dark' ? 'bg-white/10 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}>
+                ${activeTokenSymbol}
               </span>
-            )}
-          </div>
-        )}
-      </div>
+              {phase === 'graduating' && (
+                <span className={`text-[10px] font-medium ${tone === 'dark' ? 'text-amber-300' : 'text-amber-700'}`}>
+                  Pending launch
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Graduation progress */}
       {!isGraduated && (

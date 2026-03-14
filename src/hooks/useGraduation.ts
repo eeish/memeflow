@@ -9,6 +9,7 @@ import {
   type GraduationConfig,
   GRADUATION_THRESHOLD,
   getMarketPhase,
+  resolveGraduationVaultMetadata,
 } from '../lib/graduation';
 
 const STORAGE_KEY_PREFIX = 'cord_graduation_';
@@ -25,6 +26,8 @@ interface StoredGraduation {
   tokenVaultId?: string;
   graduatedAt: number;
   treasuryBalanceMist: string; // bigint serialized as string
+  /** DeepBook pool object ID for this token/SUI pair — set after pool creation */
+  poolId?: string;
 }
 
 function loadGraduation(ownerAddress: string): StoredGraduation | null {
@@ -95,6 +98,13 @@ export function useGraduation(ownerAddress?: string | null) {
   const [marketFound, setMarketFound] = useState(false);
   const [marketGraduated, setMarketGraduated] = useState(false);
   const [stored, setStored] = useState<StoredGraduation | null>(null);
+  const [vaultMetadata, setVaultMetadata] = useState<{
+    tokenSymbol?: string;
+    tokenName?: string;
+    tokenType?: string;
+    vaultId?: string;
+    poolId?: string;
+  } | null>(null);
 
   const executeTransaction = useCallback(
     async (transaction: Transaction): Promise<any> =>
@@ -191,10 +201,12 @@ export function useGraduation(ownerAddress?: string | null) {
   useEffect(() => {
     if (!ownerAddress) {
       setStored(null);
+      setVaultMetadata(null);
       setIsLoading(false);
       return;
     }
     setStored(loadGraduation(ownerAddress));
+    setVaultMetadata(null);
   }, [ownerAddress]);
 
   // Fetch on-chain market data
@@ -237,6 +249,34 @@ export function useGraduation(ownerAddress?: string | null) {
     };
   }, [ownerAddress, findMarketByOwner]);
 
+  // When the market is graduated, resolve any missing launch metadata from the on-chain
+  // CreatorTokenVault so viewers on other devices can still trade.
+  useEffect(() => {
+    if (!marketGraduated || !graduationRegistryId || graduationRegistryId === '0x0') return;
+    if (!ownerAddress) return;
+
+    let cancelled = false;
+
+    const resolveFromChain = async () => {
+      try {
+        const market = await findMarketByOwner(ownerAddress);
+        if (cancelled || !market) return;
+
+        const resolved = await resolveGraduationVaultMetadata(client, graduationRegistryId, market.objectId);
+        if (!cancelled) {
+          setVaultMetadata(resolved);
+        }
+      } catch {
+        if (!cancelled) {
+          setVaultMetadata(null);
+        }
+      }
+    };
+
+    resolveFromChain();
+    return () => { cancelled = true; };
+  }, [marketGraduated, graduationRegistryId, ownerAddress, findMarketByOwner, client]);
+
   // Derive graduation state.
   // Source of truth for "graduated/launched" is on-chain market.graduated.
   const graduationState: GraduationState | null = (() => {
@@ -251,13 +291,14 @@ export function useGraduation(ownerAddress?: string | null) {
         holdersCount: holders,
         graduationThreshold: GRADUATION_THRESHOLD,
         treasuryBalanceMist: treasury,
-        tokenName: stored?.tokenName,
-        tokenSymbol: stored?.tokenSymbol,
+        tokenName: stored?.tokenName || vaultMetadata?.tokenName,
+        tokenSymbol: stored?.tokenSymbol || vaultMetadata?.tokenSymbol || undefined,
         tokenPackageId: stored?.tokenPackageId,
-        tokenType: stored?.tokenType,
-        tokenVaultId: stored?.tokenVaultId,
+        tokenType: stored?.tokenType || vaultMetadata?.tokenType,
+        tokenVaultId: stored?.tokenVaultId || vaultMetadata?.vaultId,
         graduatedAt: stored?.graduatedAt,
         liquidityPooled: treasury,
+        poolId: stored?.poolId || vaultMetadata?.poolId,
       };
     }
 

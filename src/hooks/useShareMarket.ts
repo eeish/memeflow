@@ -40,14 +40,16 @@ export interface MarketInfo {
   owner: string;
   holders: number;
   graduated: boolean;
+  /** The package ID this market was created under — use this for buy/sell calls */
+  packageId: string;
 }
 
 export function useShareMarket() {
   const account = useCurrentAccount();
   const client = useSuiClient();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction();
-  // packageId = latest version for calling functions
-  // originalPackageId = first deployment for querying existing objects
+  // packageId = latest version for calling contract functions
+  // originalPackageId = first deployment for querying existing objects (unchanged across upgrades)
   const { packageId, originalPackageId } = useContractAddresses();
 
   const [loading, setLoading] = useState(false);
@@ -104,7 +106,6 @@ export function useShareMarket() {
 
     try {
       // First try: Query owned objects (works for owned markets - current deployment)
-      // Use originalPackageId since Market objects were created with the original package type
       try {
         const objects = await client.getOwnedObjects({
           owner: ownerAddress,
@@ -132,6 +133,7 @@ export function useShareMarket() {
               owner: ownerAddress,
               holders,
               graduated,
+              packageId: originalPackageId,
             };
           }
         }
@@ -139,8 +141,8 @@ export function useShareMarket() {
         console.warn('Owned objects query failed:', ownedErr);
       }
 
-      // Second try: Query events to find shared markets (for future deployments with shared objects)
-      // Use originalPackageId since events were emitted by the original package
+      // Second try: Query SharePurchased events and filter client-side for this owner.
+      // Note: compound All/Sender filters are not supported by the testnet RPC.
       try {
         const events = await client.queryEvents({
           query: {
@@ -152,14 +154,12 @@ export function useShareMarket() {
 
         console.log('Events query result:', events.data.length, 'events found');
 
-        // Find the market creation event for this owner
-        // Market creation is when buyer == creator (first share purchase)
         for (const event of events.data) {
           const parsedJson = event.parsedJson as any;
+          // The market-creation event has creator == buyer == ownerAddress
           if (parsedJson?.creator === ownerAddress && parsedJson?.buyer === ownerAddress) {
             const marketId = parsedJson.market_id;
             if (marketId) {
-              // Fetch the market object to get current holders count
               try {
                 const marketObj = await client.getObject({
                   id: marketId,
@@ -178,6 +178,7 @@ export function useShareMarket() {
                     owner: ownerAddress,
                     holders,
                     graduated,
+                    packageId: originalPackageId,
                   };
                 }
               } catch (objErr) {
@@ -198,16 +199,21 @@ export function useShareMarket() {
     }
   }, [client, originalPackageId]);
 
-  // Buy a share in a market
+  // Buy a share in a market.
+  // marketPackageId: the package the market was created under (may differ from current packageId
+  // after a --fresh redeployment). Defaults to the current packageId when not provided.
   const buyShare = useCallback(async (
     marketObjectId: string,
     currentHolders: number,
+    marketPackageId?: string,
   ): Promise<{ success: boolean; error?: string; txDigest?: string }> => {
     if (!account) {
       return { success: false, error: 'Wallet not connected' };
     }
 
-    if (!packageId || packageId === '0x0') {
+    // Use the market's own package to call buy_share so old markets remain purchasable
+    const callPackageId = marketPackageId || packageId;
+    if (!callPackageId || callPackageId === '0x0') {
       return { success: false, error: 'Contracts not deployed' };
     }
 
@@ -229,9 +235,9 @@ export function useShareMarket() {
       // Split coin for payment
       const [paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(paymentAmount.toString())]);
 
-      // Call buy_share on the share_market module
+      // Call buy_share on the market's original package so the type matches
       tx.moveCall({
-        target: `${packageId}::share_market::buy_share`,
+        target: `${callPackageId}::share_market::buy_share`,
         arguments: [
           tx.object(marketObjectId),
           paymentCoin,
@@ -274,15 +280,19 @@ export function useShareMarket() {
     }
   }, [account, packageId, resolveTxStatus, signAndExecute]);
 
-  // Sell a share in a market
+  // Sell a share in a market.
+  // marketPackageId: the package the market was created under (may differ from current packageId
+  // after a --fresh redeployment). Defaults to the current packageId when not provided.
   const sellShare = useCallback(async (
     marketObjectId: string,
+    marketPackageId?: string,
   ): Promise<{ success: boolean; error?: string; txDigest?: string }> => {
     if (!account) {
       return { success: false, error: 'Wallet not connected' };
     }
 
-    if (!packageId || packageId === '0x0') {
+    const callPackageId = marketPackageId || packageId;
+    if (!callPackageId || callPackageId === '0x0') {
       return { success: false, error: 'Contracts not deployed' };
     }
 
@@ -292,9 +302,9 @@ export function useShareMarket() {
     try {
       const tx = new Transaction();
 
-      // Call sell_share on the share_market module
+      // Call sell_share on the market's original package so the type matches
       tx.moveCall({
-        target: `${packageId}::share_market::sell_share`,
+        target: `${callPackageId}::share_market::sell_share`,
         arguments: [
           tx.object(marketObjectId),
         ],

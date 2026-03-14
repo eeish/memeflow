@@ -5,6 +5,18 @@ import { TrendingUp, TrendingDown, Users, Loader2 } from './ui-simple/Icons';
 import { GRADUATION_THRESHOLD, graduationProgressPercent } from '../lib/graduation';
 import type { UserSummary } from '../types/users';
 
+// Creator tokens use 9 decimals (same as SUI)
+const TOKEN_DECIMALS = 1_000_000_000n;
+
+function formatTokenQuantity(raw: bigint): string {
+  if (raw === 0n) return '0';
+  const whole = raw / TOKEN_DECIMALS;
+  const frac = raw % TOKEN_DECIMALS;
+  if (frac === 0n) return whole.toLocaleString();
+  const fracStr = frac.toString().padStart(9, '0').replace(/0+$/, '');
+  return `${whole.toLocaleString()}.${fracStr.slice(0, 4)}`;
+}
+
 interface HoldingsProps {
   onNavigateToProfile?: (user: UserSummary) => void;
 }
@@ -60,6 +72,11 @@ export const Holdings: React.FC<HoldingsProps> = ({ onNavigateToProfile }) => {
         {holdings.map((holding) => {
           const pnlPositive = holding.pnlPercent >= 0;
           const progress = graduationProgressPercent(holding.holders);
+          // Use only the on-chain-resolved symbol; never fall back to creator.token_symbol
+          // which is an unrelated profile field (often set to the username).
+          const displaySymbol = holding.tokenSymbol
+            ? `$${holding.tokenSymbol.replace('$', '')}`
+            : null;
 
           return (
             <button
@@ -86,7 +103,7 @@ export const Holdings: React.FC<HoldingsProps> = ({ onNavigateToProfile }) => {
                   </span>
                   {holding.isGraduated ? (
                     <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">
-                      ${holding.creator.token_symbol}
+                      {displaySymbol ?? 'Token'}
                     </span>
                   ) : (
                     <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">
@@ -94,13 +111,28 @@ export const Holdings: React.FC<HoldingsProps> = ({ onNavigateToProfile }) => {
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
-                  <Users className="h-3 w-3" />
-                  <span>{holding.holders}/{GRADUATION_THRESHOLD}</span>
-                  {!holding.isGraduated && (
+
+                {holding.isGraduated ? (
+                  /* Graduated: show token quantity */
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
+                    <span>
+                      {holding.tokenQuantity > 0n
+                        ? `${formatTokenQuantity(holding.tokenQuantity)} tokens`
+                        : '1 token'}
+                    </span>
+                  </div>
+                ) : (
+                  /* Phase 1: show "1 share" + graduation progress + cost price */
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
+                    <Users className="h-3 w-3" />
+                    <span>1 share</span>
+                    <span className="text-gray-300">·</span>
+                    <span>{holding.holders}/{GRADUATION_THRESHOLD}</span>
                     <span className="text-gray-400">({progress}%)</span>
-                  )}
-                </div>
+                    <span className="text-gray-300">·</span>
+                    <span>cost {formatMistToSui(holding.purchasePriceMist)} SUI</span>
+                  </div>
+                )}
               </div>
 
               {/* Value & P&L */}

@@ -6,6 +6,7 @@
 ///   distributes TOKENS_PER_HOLDER creator tokens to every Phase 1 share holder.
 module cord::graduation {
     use sui::coin::{Self as coin, TreasuryCap};
+    use sui::dynamic_field;
     use sui::event;
     use sui::table::{Self as table, Table};
     use sui::tx_context::{Self as tx};
@@ -23,10 +24,13 @@ module cord::graduation {
     const E_MARKET_NOT_GRADUATED: u64 = 103;
     const E_TOKEN_ALREADY_REGISTERED: u64 = 104;
     const E_NOT_ADMIN: u64 = 105;
+    const E_INVALID_POOL_ID: u64 = 106;
+    const E_VAULT_MISMATCH: u64 = 107;
 
     /// Tokens minted to each Phase 1 share holder at token registration.
     /// With 9 decimal places this equals 1,000 tokens per holder.
     const TOKENS_PER_HOLDER: u64 = 1_000_000_000_000;
+    const POOL_ID_FIELD_NAME: u8 = 0;
 
     /// =============================
     /// Events
@@ -59,6 +63,13 @@ module cord::graduation {
         market_id: address,
         creator: address,
         total_graduated: u64,
+    }
+
+    public struct CreatorTokenPoolRegistered has copy, drop {
+        market_id: address,
+        creator: address,
+        vault_id: address,
+        pool_id: address,
     }
 
     /// =============================
@@ -213,6 +224,34 @@ module cord::graduation {
         transfer::public_transfer(out, recipient);
     }
 
+    /// Persist the DeepBook pool object ID for a graduated creator token.
+    public entry fun register_pool_id<T>(
+        registry: &GraduationRegistry,
+        vault: &mut CreatorTokenVault<T>,
+        pool_id: address,
+        ctx: &mut TxContext,
+    ) {
+        let sender = tx::sender(ctx);
+        assert!(sender == vault.creator, E_NOT_MARKET_OWNER);
+        assert!(pool_id != @0x0, E_INVALID_POOL_ID);
+
+        let registered_vault_id = *table::borrow(&registry.vault_by_market, vault.market_id);
+        let vault_id = object::uid_to_address(&vault.id);
+        assert!(registered_vault_id == vault_id, E_VAULT_MISMATCH);
+
+        if (dynamic_field::exists_with_type<u8, address>(&vault.id, POOL_ID_FIELD_NAME)) {
+            let _ = dynamic_field::remove<u8, address>(&mut vault.id, POOL_ID_FIELD_NAME);
+        };
+        dynamic_field::add(&mut vault.id, POOL_ID_FIELD_NAME, pool_id);
+
+        event::emit(CreatorTokenPoolRegistered {
+            market_id: vault.market_id,
+            creator: vault.creator,
+            vault_id,
+            pool_id,
+        });
+    }
+
     /// Roll back a graduated market that has not yet completed token registration.
     /// Since the SUI treasury was never drained, no repayment is required.
     public entry fun rollback_graduation(
@@ -274,6 +313,13 @@ module cord::graduation {
     public fun get_vault_creator<T>(vault: &CreatorTokenVault<T>): address { vault.creator }
     public fun get_vault_symbol<T>(vault: &CreatorTokenVault<T>): &vector<u8> { &vault.symbol }
     public fun get_vault_name<T>(vault: &CreatorTokenVault<T>): &vector<u8> { &vault.name }
+    public fun get_vault_pool_id<T>(vault: &CreatorTokenVault<T>): address {
+        if (dynamic_field::exists_with_type<u8, address>(&vault.id, POOL_ID_FIELD_NAME)) {
+            *dynamic_field::borrow<u8, address>(&vault.id, POOL_ID_FIELD_NAME)
+        } else {
+            @0x0
+        }
+    }
 
     #[test_only]
     public fun init_for_testing(ctx: &mut TxContext) {
