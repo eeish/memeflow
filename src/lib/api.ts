@@ -412,11 +412,6 @@ class ApiService {
     return this.request<PostWithAuthor[]>(`/users/${userId}/feed?limit=${limit}&offset=${offset}`);
   }
 
-  // Get posts by a specific user
-  async getUserPosts(userId: string, limit = 20, offset = 0): Promise<ApiResponse<PostWithAuthor[]>> {
-    return this.request<PostWithAuthor[]>(`/users/${userId}/posts?limit=${limit}&offset=${offset}`);
-  }
-
   // Notification endpoints
   async getUserNotifications(userId: string): Promise<ApiResponse<Notification[]>> {
     return this.request<Notification[]>(`/notifications/${userId}`);
