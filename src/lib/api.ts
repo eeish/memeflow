@@ -1,6 +1,9 @@
 // API service for Cord backend
-// Use same hostname as frontend so it works from any device on the LAN
-const API_BASE_URL = `http://${window.location.hostname}:3001/api`;
+// In production, set VITE_API_BASE_URL to the deployed backend URL.
+// In local dev, falls back to same hostname:3001 so LAN devices work.
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ??
+  `http://${window.location.hostname}:3001/api`;
 
 export interface User {
   id: string;
