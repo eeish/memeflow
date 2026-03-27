@@ -259,8 +259,10 @@ async fn main() {
     ));
 
     // Start the server
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
-    println!("🚀 Cord Service running on http://0.0.0.0:3001");
+    let port = std::env::var("PORT").unwrap_or_else(|_| "3001".to_string());
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    println!("🚀 Cord Service running on http://{}", addr);
 
     axum::serve(listener, app).await.unwrap();
 }
