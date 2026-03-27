@@ -5,12 +5,12 @@ interface GraduationMetadataClient {
     data?: {
       type?: string;
       content?: unknown;
-    };
+    } | null;
   }>;
   getDynamicFieldObject: (input: { parentId: string; name: { type: string; value: unknown } }) => Promise<{
     data?: {
       content?: unknown;
-    };
+    } | null;
   }>;
 }
 
@@ -28,8 +28,13 @@ export interface GraduationState {
   tokenVaultId?: string;
   graduatedAt?: number; // timestamp ms
   liquidityPooled?: bigint;
-  /** DeepBook pool object ID for this token/SUI pair — set after pool creation */
   poolId?: string;
+  liquidityPrepared?: boolean;
+  initialLiquiditySeeded?: boolean;
+  launchStatus?: 'queued' | 'running' | 'completed' | 'failed';
+  launchStep?: string;
+  launchError?: string;
+  operatorAddress?: string;
 }
 
 export interface GraduationConfig {
@@ -43,6 +48,8 @@ export interface GraduationVaultMetadata {
   tokenName?: string;
   tokenType?: string;
   poolId?: string;
+  liquidityPrepared?: boolean;
+  initialLiquiditySeeded?: boolean;
 }
 
 const MIN_SUPPLY = 2;
@@ -110,6 +117,36 @@ async function loadVaultPoolId(
   }
 }
 
+async function loadVaultLiquidityPrepared(
+  client: GraduationMetadataClient,
+  vaultId: string,
+): Promise<boolean> {
+  try {
+    await client.getDynamicFieldObject({
+      parentId: vaultId,
+      name: { type: 'u8', value: 1 },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadVaultLiquiditySeeded(
+  client: GraduationMetadataClient,
+  vaultId: string,
+): Promise<boolean> {
+  try {
+    await client.getDynamicFieldObject({
+      parentId: vaultId,
+      name: { type: 'u8', value: 2 },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function resolveGraduationVaultMetadata(
   client: GraduationMetadataClient,
   graduationRegistryId: string | undefined,
@@ -161,8 +198,11 @@ export async function resolveGraduationVaultMetadata(
       | undefined;
     const vaultContent = vaultObj.data?.content as { type?: string } | undefined;
     const vaultType = vaultObj.data?.type || vaultContent?.type;
-    const resolvedPoolId =
-      (await loadVaultPoolId(client, vaultId)) || normalizePoolId(vaultFields?.pool_id);
+    const [resolvedPoolId, liquidityPrepared, initialLiquiditySeeded] = await Promise.all([
+      loadVaultPoolId(client, vaultId).then((poolId) => poolId || normalizePoolId(vaultFields?.pool_id)),
+      loadVaultLiquidityPrepared(client, vaultId),
+      loadVaultLiquiditySeeded(client, vaultId),
+    ]);
 
     return {
       vaultId,
@@ -170,6 +210,8 @@ export async function resolveGraduationVaultMetadata(
       tokenName: decodeAsciiBytes(vaultFields?.name),
       tokenType: parseVaultTokenType(vaultType),
       poolId: resolvedPoolId,
+      liquidityPrepared,
+      initialLiquiditySeeded,
     };
   } catch {
     return null;

@@ -44,7 +44,12 @@ export const ProfileSetupFlow: React.FC<ProfileSetupFlowProps> = ({
     } catch (error: any) {
       console.error('❌ Failed to create on-chain profile:', error);
       const msg: string = error.message || '';
-      const isInsufficientBalance = msg.toLowerCase().includes('insufficient') || msg.toLowerCase().includes('balance');
+      const normalizedMsg = msg.toLowerCase();
+      const isInsufficientBalance =
+        normalizedMsg.includes('insufficient') ||
+        normalizedMsg.includes('balance') ||
+        normalizedMsg.includes('gas coin') ||
+        normalizedMsg.includes('no valid gas coins');
       setProfileError(
         isInsufficientBalance
           ? 'Insufficient SUI balance. Get testnet SUI from the faucet at faucet.testnet.sui.io, then try again.'

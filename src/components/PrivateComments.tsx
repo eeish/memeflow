@@ -452,23 +452,23 @@ function Composer({ currentUser, replyingToAuthor, onCancelReply, onSubmit }: Co
   const placeholder = replyingToAuthor ? 'Write a reply...' : 'Write a comment...';
 
   return (
-    <div className="mt-3 border-t border-gray-200 pt-3">
+    <div className="mt-3 pt-3">
       {replyingToAuthor && (
         <div className="flex items-center justify-between mb-2 text-sm">
-          <span className="text-gray-500">
-            Replying to <span className="font-medium text-gray-700">@{replyingToAuthor.name}</span>
+          <span className="text-gray-400">
+            Replying to <span className="font-medium text-gray-600">@{replyingToAuthor.name}</span>
           </span>
           <button
             type="button"
             onClick={onCancelReply}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="text-gray-400 hover:text-gray-500 transition-colors text-xs"
           >
             Cancel
           </button>
         </div>
       )}
 
-      <div className="flex gap-3">
+      <div className="flex gap-3 items-start">
         {currentUser && <UserAvatar author={currentUser} />}
         <div className="min-w-0 flex-1">
           <Textarea
@@ -478,7 +478,7 @@ function Composer({ currentUser, replyingToAuthor, onCancelReply, onSubmit }: Co
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             rows={2}
-            className="resize-none"
+            className="resize-none bg-gray-50 border-gray-200 focus:bg-white focus:border-gray-300 transition-colors text-[14px] placeholder:text-gray-400"
             disabled={submitting}
           />
           <div className="mt-2 flex justify-end">
@@ -486,6 +486,7 @@ function Composer({ currentUser, replyingToAuthor, onCancelReply, onSubmit }: Co
               size="sm"
               onClick={handleSubmit}
               disabled={!text.trim() || submitting}
+              className="text-xs px-4"
             >
               {submitting ? 'Posting...' : replyingToAuthor ? 'Reply' : 'Comment'}
             </Button>

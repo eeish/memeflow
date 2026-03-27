@@ -6,6 +6,31 @@ import { apiService } from '../lib/api';
 import { resolveGraduationVaultMetadata } from '../lib/graduation';
 import type { UserSummary } from '../types/users';
 
+interface ParsedSharePurchaseEvent {
+  buyer?: string;
+  market_id?: string;
+  price_mist?: string;
+  creator?: string;
+}
+
+interface ParsedShareSoldEvent {
+  seller?: string;
+  market_id?: string;
+}
+
+interface MarketObjectContent {
+  fields?: {
+    holders?: string | number;
+    graduated?: boolean;
+  };
+}
+
+interface StoredGraduationData {
+  tokenSymbol?: string;
+  tokenType?: string;
+  poolId?: string;
+}
+
 export interface Holding {
   marketId: string;
   creator: UserSummary;
@@ -53,7 +78,7 @@ export function usePortfolio(): PortfolioData {
       // Build a map of marketId -> { held: boolean, purchasePrice }
       const marketMap = new Map<string, { held: boolean; purchasePriceMist: bigint; creatorAddress: string }>();
 
-      // 1. Query SharePurchased events where buyer === currentUser
+      // 1. Query SharePurchased events
       const purchaseEvents = await client.queryEvents({
         query: {
           MoveEventType: `${originalPackageId}::share_market::SharePurchased`,
@@ -62,7 +87,7 @@ export function usePortfolio(): PortfolioData {
         limit: 50,
       });
 
-      // 2. Query ShareSold events where seller === currentUser
+      // 2. Query ShareSold events
       const soldEvents = await client.queryEvents({
         query: {
           MoveEventType: `${originalPackageId}::share_market::ShareSold`,
@@ -71,21 +96,54 @@ export function usePortfolio(): PortfolioData {
         limit: 50,
       });
 
+      // 3. Merge both streams and sort by on-chain timestamp so that a
+      //    sell-then-rebuy sequence is replayed in the correct order.
+      //    Processing purchases first then sells (two separate passes) loses
+      //    chronological order and causes rebuys to be masked by an earlier sell.
+      type MergedEvent =
+        | { type: 'purchase'; marketId: string; priceMist: bigint; creatorAddress: string; ts: number }
+        | { type: 'sell';     marketId: string; ts: number };
+
+      const merged: MergedEvent[] = [];
+
       for (const event of purchaseEvents.data) {
-        const parsed = event.parsedJson as any;
-        if (parsed?.buyer === userAddress) {
-          marketMap.set(parsed.market_id, {
-            held: true,
-            purchasePriceMist: BigInt(parsed.price_mist),
+        const parsed = event.parsedJson as ParsedSharePurchaseEvent | null;
+        if (parsed?.buyer === userAddress && parsed.market_id && parsed.price_mist && parsed.creator) {
+          merged.push({
+            type: 'purchase',
+            marketId: parsed.market_id,
+            priceMist: BigInt(parsed.price_mist),
             creatorAddress: parsed.creator,
+            ts: Number(event.timestampMs ?? 0),
           });
         }
       }
 
       for (const event of soldEvents.data) {
-        const parsed = event.parsedJson as any;
-        if (parsed?.seller === userAddress) {
-          const existing = marketMap.get(parsed.market_id);
+        const parsed = event.parsedJson as ParsedShareSoldEvent | null;
+        if (parsed?.seller === userAddress && parsed.market_id) {
+          merged.push({
+            type: 'sell',
+            marketId: parsed.market_id,
+            ts: Number(event.timestampMs ?? 0),
+          });
+        }
+      }
+
+      // Sort ascending by timestamp — reconstructs true on-chain history
+      merged.sort((a, b) => a.ts - b.ts);
+
+      // Replay events in order to compute current hold state
+      for (const ev of merged) {
+        if (ev.type === 'purchase') {
+          // Rebuy overwrites previous entry — held: true with the new price
+          marketMap.set(ev.marketId, {
+            held: true,
+            purchasePriceMist: ev.priceMist,
+            creatorAddress: ev.creatorAddress,
+          });
+        } else {
+          const existing = marketMap.get(ev.marketId);
           if (existing) {
             existing.held = false;
           }
@@ -112,7 +170,7 @@ export function usePortfolio(): PortfolioData {
             options: { showContent: true },
           });
 
-          const content = marketObj.data?.content as any;
+          const content = marketObj.data?.content as MarketObjectContent | undefined;
           const holders = content?.fields?.holders ? Number(content.fields.holders) : 1;
           // Use on-chain graduated flag — localStorage is unreliable (not set on other devices)
           const isGraduated = !!content?.fields?.graduated;
@@ -158,13 +216,12 @@ export function usePortfolio(): PortfolioData {
           let tokenQuantity = 0n;
           let resolvedTokenType: string | null = null;
           let poolId: string | null = null;
-
           if (isGraduated) {
             // Try localStorage first (fast path — only works on the launcher's own device)
             const raw = localStorage.getItem(`cord_graduation_${info.creatorAddress}`);
             if (raw) {
               try {
-                const stored = JSON.parse(raw);
+                const stored = JSON.parse(raw) as StoredGraduationData;
                 if (stored.tokenSymbol) tokenSymbol = stored.tokenSymbol;
                 if (stored.tokenType) resolvedTokenType = stored.tokenType;
                 if (stored.poolId) poolId = stored.poolId;
@@ -182,7 +239,7 @@ export function usePortfolio(): PortfolioData {
             if (resolvedTokenType) {
               try {
                 const coins = await client.getCoins({ owner: userAddress, coinType: resolvedTokenType });
-                tokenQuantity = coins.data.reduce((sum: bigint, coin: any) => sum + BigInt(coin.balance), 0n);
+                tokenQuantity = coins.data.reduce((sum, coin) => sum + BigInt(coin.balance), 0n);
               } catch {
                 // ignore
               }

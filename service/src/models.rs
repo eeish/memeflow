@@ -206,6 +206,90 @@ impl<T> ApiResponse<T> {
 }
 
 // ============================================================================
+// Graduation Launch Types
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraduationLaunchRequest {
+    pub owner_address: String,
+    pub market_id: String,
+    pub token_name: String,
+    pub token_symbol: String,
+    pub auth_nonce: String,
+    pub auth_timestamp_ms: i64,
+    pub auth_signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraduationLaunchStatus {
+    pub owner_address: String,
+    pub market_id: String,
+    pub token_name: String,
+    pub token_symbol: String,
+    pub status: String,
+    pub step: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vault_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pool_id: Option<String>,
+    pub operator_address: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertGraduationLaunchStatus {
+    pub owner_address: String,
+    pub market_id: String,
+    pub token_name: String,
+    pub token_symbol: String,
+    pub status: String,
+    pub step: String,
+    pub error: Option<String>,
+    pub package_id: Option<String>,
+    pub token_type: Option<String>,
+    pub vault_id: Option<String>,
+    pub pool_id: Option<String>,
+    pub operator_address: String,
+}
+
+// ============================================================================
+// AMM Swap / OHLCV Types
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordSwapRequest {
+    pub pool_id: String,
+    pub trader: String,
+    pub side: String, // "buy" or "sell"
+    pub sui_amount_mist: i64,
+    pub token_amount: i64,
+    pub price_sui: f64,
+    pub timestamp_ms: i64,
+    pub tx_digest: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OhlcvCandle {
+    /// Bucket open timestamp in milliseconds (UTC)
+    pub time_ms: i64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    /// Total SUI volume in human units (not mist)
+    pub volume_sui: f64,
+    /// Number of swaps in this bucket
+    pub trade_count: i64,
+}
+
+// ============================================================================
 // Media Upload Types (R2)
 // ============================================================================
 

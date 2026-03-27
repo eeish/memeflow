@@ -14,36 +14,51 @@ A Rust-based backend service for the Cord social trading platform, handling all 
 
 ### Technical Stack
 - **Framework**: Axum (async web framework)
-- **Database**: SQLx with SQLite (easily switchable to PostgreSQL/MySQL)
+- **Database**: SQLx with PostgreSQL (managed via `sqlx migrate`)
 - **Authentication**: JWT tokens with bcrypt hashing
 - **CORS**: Configured for frontend integration
-- **Logging**: env_logger for development
+- **Logging**: tracing / tracing-subscriber
 
 ## 🛠 Development Setup
 
 ### Prerequisites
-- Rust 1.70+ 
-- Cargo
+- Rust 1.70+
+- Docker (for local PostgreSQL)
 
 ### Quick Start
 
 ```bash
-# Navigate to service directory
+# 1. Start local PostgreSQL (from repo root)
+npm run db:start
+# or: docker compose -f docker-compose.dev.yml up -d postgres
+
+# 2. Copy environment template and edit if needed
+cp service/.env.example service/.env
+
+# 3. Run the service (migrations run automatically on startup)
 cd service
-
-# Run the service in development mode
-cargo run
-
-# Or with logging
 RUST_LOG=info cargo run
 
-# The service will start on http://localhost:3001
+# The service starts on http://localhost:3001
 ```
 
 ### Build for Production
 
 ```bash
 cargo build --release
+```
+
+### Database Management
+
+```bash
+# Check table counts and service status
+npm run db:check
+
+# Truncate all tables (preserves schema)
+npm run db:reset
+
+# Stop local Postgres container
+npm run db:stop
 ```
 
 ## 🔍 Sui Address Verification
@@ -109,8 +124,10 @@ Cord Service includes comprehensive Sui address verification to ensure new users
 ### Environment Variables
 
 ```bash
-# Database
-DATABASE_URL=sqlite:./cord.db
+# Database — PostgreSQL connection string
+# Local dev:   postgres://cord:cord@localhost:5432/cord
+# Railway:     injected automatically by the Postgres plugin
+DATABASE_URL=postgres://cord:cord@localhost:5432/cord
 
 # Server
 HOST=0.0.0.0
@@ -121,6 +138,16 @@ JWT_SECRET=your-secret-key-here
 
 # Logging
 RUST_LOG=info
+
+# Graduation operator
+GRADUATION_OPERATOR_NETWORK=testnet
+GRADUATION_OPERATOR_RPC_URL=https://fullnode.testnet.sui.io:443
+GRADUATION_OPERATOR_ADDRESS=0x...
+GRADUATION_OPERATOR_PRIVATE_KEY=suiprivkey...
+
+# Optional overrides if you do not want to read from public/deployment-<network>.json
+CORD_CONTRACT_PACKAGE_ID=0x...
+CORD_GRADUATION_REGISTRY_ID=0x...
 ```
 
 ### CORS Configuration
@@ -257,36 +284,39 @@ cargo test database
 
 ## 🚀 Deployment
 
-### Docker
+### Railway (recommended)
+
+1. Push this repo to GitHub.
+2. Create a new Railway project → **Deploy from GitHub repo**.
+3. Add a **PostgreSQL** plugin to the project — Railway injects `DATABASE_URL` automatically.
+4. Railway uses Nixpacks to detect Rust and build automatically.
+5. Migrations run on every startup via `sqlx::migrate!()`.
+
+See `railway.toml` at the repo root for build/deploy configuration.
+
+### Docker Compose (local full-stack)
+
+```bash
+# Start Postgres + cord-service
+docker compose -f docker-compose.dev.yml up -d
+
+# Tail service logs
+docker compose -f docker-compose.dev.yml logs -f cord-service
+```
+
+### Docker (standalone)
 ```dockerfile
-FROM rust:1.70 as builder
+FROM rust:1.75-slim as builder
 WORKDIR /app
 COPY . .
 RUN cargo build --release
 
 FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y libssl3 ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/cord-service .
 EXPOSE 3001
 CMD ["./cord-service"]
-```
-
-### Systemd Service
-```ini
-[Unit]
-Description=Cord Service
-After=network.target
-
-[Service]
-Type=simple
-User=cord
-ExecStart=/opt/cord/cord-service
-Restart=always
-Environment=DATABASE_URL=sqlite:/opt/cord/cord.db
-Environment=RUST_LOG=info
-
-[Install]
-WantedBy=multi-user.target
 ```
 
 ## 🤝 Contributing
@@ -310,7 +340,7 @@ WantedBy=multi-user.target
 - [x] Basic analytics
 
 ### Phase 2: Enhanced Features 🚧
-- [ ] Real database integration (PostgreSQL)
+- [x] PostgreSQL with versioned migrations
 - [ ] JWT authentication middleware
 - [ ] Real-time notifications (WebSocket)
 - [ ] File upload for avatars/media

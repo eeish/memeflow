@@ -310,7 +310,7 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
           )}
 
           {showComments && (
-            <div className="mt-4 border-t border-gray-100 pt-4">
+            <div className="mt-3">
               {commentsLoading ? (
                 <p className="text-xs text-gray-400 py-4">Loading comments...</p>
               ) : (

@@ -338,7 +338,7 @@ export function EditProfile({ user, onClose, onSave }: EditProfileProps) {
                 value={username}
                 onChange={(e) => handleUsernameChange(e.target.value)}
                 placeholder="username"
-                className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent ${
+                className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent ${
                   usernameError
                     ? 'border-red-300 bg-red-50'
                     : usernameAvailable === true
@@ -386,7 +386,7 @@ export function EditProfile({ user, onClose, onSave }: EditProfileProps) {
               onChange={(e) => handleBioChange(e.target.value)}
               placeholder="Tell us about yourself..."
               rows={3}
-              className={`w-full px-3 py-2 border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent ${
+              className={`w-full px-3 py-2 border rounded-lg text-sm text-gray-900 bg-white resize-none focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent ${
                 bioError ? 'border-red-300 bg-red-50' : 'border-gray-200'
               }`}
             />

@@ -19,6 +19,9 @@ interface GraduationDialogProps {
   holdersCount: number;
   treasuryMist: bigint;
   onGraduate: (config: GraduationConfig) => Promise<void>;
+  launchStatus?: 'queued' | 'running' | 'completed' | 'failed';
+  launchStep?: string;
+  operatorAddress?: string;
 }
 
 export const GraduationDialog: React.FC<GraduationDialogProps> = ({
@@ -28,6 +31,9 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
   holdersCount,
   treasuryMist,
   onGraduate,
+  launchStatus,
+  launchStep,
+  operatorAddress,
 }) => {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [tokenName, setTokenName] = useState(`${username} Token`);
@@ -45,8 +51,8 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
     try {
       await onGraduate({ tokenName, tokenSymbol: tokenSymbol.toUpperCase() });
       setStep(3);
-    } catch (error: any) {
-      setLaunchError(error?.message || 'Launch failed');
+    } catch (error: unknown) {
+      setLaunchError(error instanceof Error ? error.message : 'Launch failed');
     } finally {
       setIsLaunching(false);
     }
@@ -55,14 +61,12 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
   const handleClose = () => {
     setLaunchError(null);
     onOpenChange(false);
-    // Reset to step 1 after close animation
     setTimeout(() => setStep(1), 200);
   };
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="bg-white max-w-md">
-        {/* Step 1: Congrats / Overview */}
         {step === 1 && (
           <>
             <DialogHeader>
@@ -71,14 +75,12 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
                 Your market is fully subscribed!
               </DialogTitle>
               <DialogDescription className="text-gray-600">
-                Congratulations! Your share market has reached maximum capacity.
+                One wallet signature is enough. Cord handles the launch flow after that.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-100">
-                <div className="text-sm text-gray-600 mb-1">
-                  Treasury accumulated
-                </div>
+                <div className="text-sm text-gray-600 mb-1">Treasury accumulated</div>
                 <div className="text-2xl font-bold text-purple-600">
                   {treasuryFormatted} SUI
                 </div>
@@ -87,10 +89,17 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
                 </div>
               </div>
               <p className="text-sm text-gray-600">
-                You can now graduate your market by launching a creator token.
-                Your existing share holders will be converted to token holders,
-                and the accumulated treasury will seed the liquidity pool.
+                Cord will publish the token package, graduate the market, initialize the protocol-owned
+                AMM pool, and seed the launch liquidity from the operator wallet.
               </p>
+              {operatorAddress && (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-xs text-gray-600">
+                  <div className="font-medium text-gray-700">Operator wallet</div>
+                  <div className="mt-1 font-mono text-[11px] text-gray-500 break-all">
+                    {operatorAddress}
+                  </div>
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button
@@ -110,7 +119,6 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
           </>
         )}
 
-        {/* Step 2: Token Configuration */}
         {step === 2 && (
           <>
             <DialogHeader>
@@ -119,7 +127,7 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
                 Configure your token
               </DialogTitle>
               <DialogDescription className="text-gray-600">
-                Choose a name and symbol for your creator token.
+                Choose a name and symbol, then authorize Cord to finish the token launch and AMM setup.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
@@ -155,7 +163,6 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
                 </p>
               </div>
 
-              {/* Preview */}
               <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
                 <div className="text-xs text-gray-500 mb-2">Preview</div>
                 <div className="flex items-center gap-3">
@@ -188,22 +195,18 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
               </Button>
               <Button
                 onClick={handleLaunch}
-                disabled={
-                  isLaunching ||
-                  !tokenName.trim() ||
-                  !tokenSymbol.trim()
-                }
+                disabled={isLaunching || !tokenName.trim() || !tokenSymbol.trim()}
                 className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
               >
                 {isLaunching ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    Launching...
+                    Authorizing...
                   </>
                 ) : (
                   <>
                     <Rocket className="w-4 h-4 mr-2" />
-                    Launch Token
+                    Authorize Launch
                   </>
                 )}
               </Button>
@@ -211,16 +214,15 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
           </>
         )}
 
-        {/* Step 3: Success */}
         {step === 3 && (
           <>
             <DialogHeader>
               <DialogTitle className="text-gray-900 flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-green-500" />
-                Launch details saved for ${tokenSymbol}
+                Launch queued for ${tokenSymbol}
               </DialogTitle>
               <DialogDescription className="text-gray-600">
-                Local confirmation saved. On-chain graduation status is determined by contract state.
+                Cord accepted your authorization and is finishing the backend launch and pool initialization.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
@@ -230,19 +232,14 @@ export const GraduationDialog: React.FC<GraduationDialogProps> = ({
                     {tokenSymbol.charAt(0)}
                   </div>
                   <div>
-                    <div className="font-semibold text-gray-900">
-                      {tokenName}
-                    </div>
-                    <div className="text-sm text-purple-600">
-                      ${tokenSymbol}
-                    </div>
+                    <div className="font-semibold text-gray-900">{tokenName}</div>
+                    <div className="text-sm text-purple-600">${tokenSymbol}</div>
                   </div>
                 </div>
                 <div className="space-y-1 text-sm text-gray-600">
-                  <p>
-                    {holdersCount} share holders will convert to token holders after on-chain graduation.
-                  </p>
-                  <p>{treasuryFormatted} SUI will be pooled after on-chain graduation.</p>
+                  <p>{holdersCount} share holders will convert to token holders automatically.</p>
+                  <p>{treasuryFormatted} SUI becomes the initial AMM-side treasury liquidity.</p>
+                  <p>Status: {launchStatus === 'completed' ? 'Token live' : launchStep || 'Launching'}</p>
                 </div>
               </div>
             </div>

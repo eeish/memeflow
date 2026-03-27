@@ -13,6 +13,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 mod creator_token_builder;
 mod database;
+mod graduation_operator;
 mod handlers;
 mod models;
 pub mod post_hash;
@@ -22,6 +23,7 @@ mod sui_verification;
 pub mod username_validation;
 
 use handlers::*;
+use graduation_operator::GraduationOperator;
 
 // Application state
 #[derive(Clone)]
@@ -30,6 +32,8 @@ pub struct AppState {
     pub sui_verification: Arc<sui_verification::SuiVerification>,
     pub r2_client: Option<Arc<r2_client::R2Client>>,
     pub r2_error: Option<String>,
+    pub graduation_operator: Option<Arc<GraduationOperator>>,
+    pub graduation_operator_error: Option<String>,
     pub notification_sessions: Arc<DashMap<String, mpsc::UnboundedSender<Message>>>,
     pub notification_notify: Arc<Notify>,
 }
@@ -104,11 +108,30 @@ async fn main() {
         }
     };
 
+    let mut graduation_operator_error: Option<String> = None;
+    let graduation_operator = match GraduationOperator::from_env() {
+        Ok(operator) => {
+            tracing::info!(
+                operator = %operator.operator_address,
+                network = %operator.network,
+                "Graduation operator initialized"
+            );
+            Some(Arc::new(operator))
+        }
+        Err(error) => {
+            tracing::warn!("Graduation operator not initialized: {}", error);
+            graduation_operator_error = Some(error.to_string());
+            None
+        }
+    };
+
     let app_state = AppState {
         db,
         sui_verification,
         r2_client,
         r2_error,
+        graduation_operator,
+        graduation_operator_error,
         notification_sessions: Arc::new(DashMap::new()),
         notification_notify: Arc::new(Notify::new()),
     };
@@ -142,6 +165,11 @@ async fn main() {
             "/api/creator-token/build",
             post(build_creator_token_package_handler),
         )
+        .route("/api/graduation/launch", post(request_graduation_launch))
+        .route(
+            "/api/graduation/status/:owner_address",
+            get(get_graduation_launch_status),
+        )
         // Posts
         .route("/api/posts", post(create_post))
         .route("/api/posts/:id/like", post(like_post))
@@ -172,6 +200,9 @@ async fn main() {
             post(mark_all_notifications_read),
         )
         .route("/ws/notifications/:user_id", get(ws_notifications))
+        // AMM OHLCV
+        .route("/api/amm/:pool_id/swap", post(record_swap_event))
+        .route("/api/amm/:pool_id/ohlcv", get(get_ohlcv))
         // Media uploads (R2)
         .route("/api/media/upload", post(upload_media))
         .route("/api/media/batch-upload", post(batch_upload_media))

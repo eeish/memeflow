@@ -143,6 +143,22 @@ deployment-*.json
 .history/
 .vite/
 
+# AI / agent tooling — local profiles and state, never committed
+.chrome-debug*/
+.codex/
+.claude/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# SQLite database files and WAL journals
+*.db-shm
+*.db-wal
+service/db/
+
 # Testing
 /coverage/
 .jest-test-results.json

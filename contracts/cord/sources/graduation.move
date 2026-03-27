@@ -5,12 +5,14 @@
 /// - TreasuryCap<T> is then registered into this shared registry, which immediately
 ///   distributes TOKENS_PER_HOLDER creator tokens to every Phase 1 share holder.
 module cord::graduation {
+    use sui::balance::{Self as balance};
     use sui::coin::{Self as coin, TreasuryCap};
     use sui::dynamic_field;
     use sui::event;
     use sui::table::{Self as table, Table};
     use sui::tx_context::{Self as tx};
 
+    use cord::phase2_amm;
     use cord::runtime_config;
     use cord::share_market::{Self, Market};
 
@@ -24,13 +26,18 @@ module cord::graduation {
     const E_MARKET_NOT_GRADUATED: u64 = 103;
     const E_TOKEN_ALREADY_REGISTERED: u64 = 104;
     const E_NOT_ADMIN: u64 = 105;
-    const E_INVALID_POOL_ID: u64 = 106;
+    const E_POOL_ALREADY_INITIALIZED: u64 = 106;
     const E_VAULT_MISMATCH: u64 = 107;
+    const E_INITIAL_LIQUIDITY_ALREADY_PREPARED: u64 = 108;
+    const E_INVALID_LIQUIDITY_AMOUNT: u64 = 109;
+    const E_INITIAL_LIQUIDITY_NOT_PREPARED: u64 = 110;
 
     /// Tokens minted to each Phase 1 share holder at token registration.
     /// With 9 decimal places this equals 1,000 tokens per holder.
     const TOKENS_PER_HOLDER: u64 = 1_000_000_000_000;
     const POOL_ID_FIELD_NAME: u8 = 0;
+    const INITIAL_LIQUIDITY_PREPARED_FIELD_NAME: u8 = 1;
+    const INITIAL_LIQUIDITY_SEEDED_FIELD_NAME: u8 = 2;
 
     /// =============================
     /// Events
@@ -65,11 +72,33 @@ module cord::graduation {
         total_graduated: u64,
     }
 
-    public struct CreatorTokenPoolRegistered has copy, drop {
+    public struct InitialLiquidityPrepared has copy, drop {
+        market_id: address,
+        creator: address,
+        vault_id: address,
+        released_sui: u64,
+        minted_tokens: u64,
+    }
+
+    public struct InitialLiquiditySeeded has copy, drop {
+        market_id: address,
+        creator: address,
+        vault_id: address,
+    }
+
+    public struct CreatorTokenPoolInitialized has copy, drop {
         market_id: address,
         creator: address,
         vault_id: address,
         pool_id: address,
+        fee_bps: u64,
+        initial_sui_mist: u64,
+        initial_token_liquidity: u64,
+    }
+
+    public struct GraduationAdminUpdated has copy, drop {
+        previous_admin: address,
+        new_admin: address,
     }
 
     /// =============================
@@ -127,9 +156,11 @@ module cord::graduation {
         let sender = tx::sender(ctx);
         let creator = share_market::get_market_owner(market);
 
-        assert!(sender == creator, E_NOT_MARKET_OWNER);
+        assert!(sender == creator || sender == registry.admin, E_NOT_MARKET_OWNER);
+        // Graduation eligibility is based on cumulative buy count, not current holders.
+        // Sells reduce holders but do not reset progress toward the graduation threshold.
         assert!(
-            share_market::get_market_holders(market) >= runtime_config::graduation_limit(),
+            share_market::get_total_buys(market) >= runtime_config::graduation_limit(),
             E_MARKET_NOT_READY
         );
         assert!(!share_market::is_graduated(market), E_ALREADY_GRADUATED);
@@ -160,7 +191,7 @@ module cord::graduation {
     ) {
         let sender = tx::sender(ctx);
         let creator = share_market::get_market_owner(market);
-        assert!(sender == creator, E_NOT_MARKET_OWNER);
+        assert!(sender == creator || sender == registry.admin, E_NOT_MARKET_OWNER);
         assert!(share_market::is_graduated(market), E_MARKET_NOT_GRADUATED);
 
         let market_id = object::uid_to_address(share_market::get_market_uid(market));
@@ -211,7 +242,7 @@ module cord::graduation {
         });
     }
 
-    /// Mint tokens for platform liquidity operations (admin-gated).
+    /// Mint tokens for protocol-managed liquidity operations (admin-gated).
     public entry fun mint_for_liquidity<T>(
         registry: &GraduationRegistry,
         vault: &mut CreatorTokenVault<T>,
@@ -224,31 +255,165 @@ module cord::graduation {
         transfer::public_transfer(out, recipient);
     }
 
-    /// Persist the DeepBook pool object ID for a graduated creator token.
-    public entry fun register_pool_id<T>(
+    /// Release the Phase 1 SUI treasury and mint the initial token-side liquidity exactly once.
+    /// The recipient receives both assets in their wallet so the protocol can complete any
+    /// follow-up Phase 2 liquidity initialization off-chain.
+    public entry fun prepare_initial_liquidity<T>(
         registry: &GraduationRegistry,
+        market: &mut Market,
         vault: &mut CreatorTokenVault<T>,
-        pool_id: address,
+        token_amount: u64,
+        recipient: address,
         ctx: &mut TxContext,
     ) {
         let sender = tx::sender(ctx);
-        assert!(sender == vault.creator, E_NOT_MARKET_OWNER);
-        assert!(pool_id != @0x0, E_INVALID_POOL_ID);
+        assert!(sender == vault.creator || sender == registry.admin, E_NOT_MARKET_OWNER);
+        assert!(share_market::get_market_owner(market) == vault.creator, E_VAULT_MISMATCH);
+        assert!(share_market::is_graduated(market), E_MARKET_NOT_GRADUATED);
+        assert!(token_amount > 0, E_INVALID_LIQUIDITY_AMOUNT);
+
+        let registered_vault_id = *table::borrow(&registry.vault_by_market, vault.market_id);
+        let vault_id = object::uid_to_address(&vault.id);
+        assert!(registered_vault_id == vault_id, E_VAULT_MISMATCH);
+        assert!(
+            !dynamic_field::exists_with_type<u8, bool>(&vault.id, INITIAL_LIQUIDITY_PREPARED_FIELD_NAME),
+            E_INITIAL_LIQUIDITY_ALREADY_PREPARED
+        );
+
+        let treasury_balance = share_market::drain_treasury(market);
+        let released_sui = balance::value(&treasury_balance);
+        let treasury_coin = coin::from_balance(treasury_balance, ctx);
+        let token_coin = coin::mint(&mut vault.treasury_cap, token_amount, ctx);
+
+        dynamic_field::add(&mut vault.id, INITIAL_LIQUIDITY_PREPARED_FIELD_NAME, true);
+
+        transfer::public_transfer(treasury_coin, recipient);
+        transfer::public_transfer(token_coin, recipient);
+
+        event::emit(InitialLiquidityPrepared {
+            market_id: vault.market_id,
+            creator: vault.creator,
+            vault_id,
+            released_sui,
+            minted_tokens: token_amount,
+        });
+    }
+
+    /// Initialize the protocol-owned AMM pool directly from the graduated market treasury and a
+    /// freshly minted creator-token reserve.
+    public fun initialize_amm_pool<T>(
+        registry: &GraduationRegistry,
+        market: &mut Market,
+        vault: &mut CreatorTokenVault<T>,
+        token_amount: u64,
+        fee_bps: u64,
+        ctx: &mut TxContext,
+    ) {
+        let sender = tx::sender(ctx);
+        assert!(sender == vault.creator || sender == registry.admin, E_NOT_MARKET_OWNER);
+        assert!(share_market::get_market_owner(market) == vault.creator, E_VAULT_MISMATCH);
+        assert!(share_market::is_graduated(market), E_MARKET_NOT_GRADUATED);
+        assert!(token_amount > 0, E_INVALID_LIQUIDITY_AMOUNT);
+
+        let registered_vault_id = *table::borrow(&registry.vault_by_market, vault.market_id);
+        let vault_id = object::uid_to_address(&vault.id);
+        assert!(registered_vault_id == vault_id, E_VAULT_MISMATCH);
+        assert!(
+            !dynamic_field::exists_with_type<u8, address>(&vault.id, POOL_ID_FIELD_NAME),
+            E_POOL_ALREADY_INITIALIZED
+        );
+
+        let treasury_balance = share_market::drain_treasury(market);
+        let released_sui = balance::value(&treasury_balance);
+        let token_coin = coin::mint(&mut vault.treasury_cap, token_amount, ctx);
+        let token_balance = coin::into_balance(token_coin);
+
+        let pool_id = phase2_amm::create_pool<T>(
+            vault.market_id,
+            vault.creator,
+            vault_id,
+            treasury_balance,
+            token_balance,
+            fee_bps,
+            ctx,
+        );
+
+        if (dynamic_field::exists_with_type<u8, bool>(&vault.id, INITIAL_LIQUIDITY_PREPARED_FIELD_NAME)) {
+            let _ = dynamic_field::remove<u8, bool>(&mut vault.id, INITIAL_LIQUIDITY_PREPARED_FIELD_NAME);
+        };
+        dynamic_field::add(&mut vault.id, INITIAL_LIQUIDITY_PREPARED_FIELD_NAME, true);
+
+        if (dynamic_field::exists_with_type<u8, bool>(&vault.id, INITIAL_LIQUIDITY_SEEDED_FIELD_NAME)) {
+            let _ = dynamic_field::remove<u8, bool>(&mut vault.id, INITIAL_LIQUIDITY_SEEDED_FIELD_NAME);
+        };
+        dynamic_field::add(&mut vault.id, INITIAL_LIQUIDITY_SEEDED_FIELD_NAME, true);
+        dynamic_field::add(&mut vault.id, POOL_ID_FIELD_NAME, pool_id);
+
+        event::emit(InitialLiquidityPrepared {
+            market_id: vault.market_id,
+            creator: vault.creator,
+            vault_id,
+            released_sui,
+            minted_tokens: token_amount,
+        });
+
+        event::emit(CreatorTokenPoolInitialized {
+            market_id: vault.market_id,
+            creator: vault.creator,
+            vault_id,
+            pool_id,
+            fee_bps,
+            initial_sui_mist: released_sui,
+            initial_token_liquidity: token_amount,
+        });
+
+        event::emit(InitialLiquiditySeeded {
+            market_id: vault.market_id,
+            creator: vault.creator,
+            vault_id,
+        });
+    }
+
+    public entry fun mark_initial_liquidity_seeded<T>(
+        registry: &GraduationRegistry,
+        vault: &mut CreatorTokenVault<T>,
+        ctx: &mut TxContext,
+    ) {
+        let sender = tx::sender(ctx);
+        assert!(sender == registry.admin, E_NOT_ADMIN);
+        assert!(
+            dynamic_field::exists_with_type<u8, bool>(&vault.id, INITIAL_LIQUIDITY_PREPARED_FIELD_NAME),
+            E_INITIAL_LIQUIDITY_NOT_PREPARED
+        );
 
         let registered_vault_id = *table::borrow(&registry.vault_by_market, vault.market_id);
         let vault_id = object::uid_to_address(&vault.id);
         assert!(registered_vault_id == vault_id, E_VAULT_MISMATCH);
 
-        if (dynamic_field::exists_with_type<u8, address>(&vault.id, POOL_ID_FIELD_NAME)) {
-            let _ = dynamic_field::remove<u8, address>(&mut vault.id, POOL_ID_FIELD_NAME);
+        if (dynamic_field::exists_with_type<u8, bool>(&vault.id, INITIAL_LIQUIDITY_SEEDED_FIELD_NAME)) {
+            let _ = dynamic_field::remove<u8, bool>(&mut vault.id, INITIAL_LIQUIDITY_SEEDED_FIELD_NAME);
         };
-        dynamic_field::add(&mut vault.id, POOL_ID_FIELD_NAME, pool_id);
+        dynamic_field::add(&mut vault.id, INITIAL_LIQUIDITY_SEEDED_FIELD_NAME, true);
 
-        event::emit(CreatorTokenPoolRegistered {
+        event::emit(InitialLiquiditySeeded {
             market_id: vault.market_id,
             creator: vault.creator,
             vault_id,
-            pool_id,
+        });
+    }
+
+    public entry fun set_admin(
+        registry: &mut GraduationRegistry,
+        new_admin: address,
+        ctx: &mut TxContext,
+    ) {
+        let sender = tx::sender(ctx);
+        assert!(sender == registry.admin, E_NOT_ADMIN);
+        let previous_admin = registry.admin;
+        registry.admin = new_admin;
+        event::emit(GraduationAdminUpdated {
+            previous_admin,
+            new_admin,
         });
     }
 
@@ -261,7 +426,7 @@ module cord::graduation {
     ) {
         let sender = tx::sender(ctx);
         let creator = share_market::get_market_owner(market);
-        assert!(sender == creator, E_NOT_MARKET_OWNER);
+        assert!(sender == creator || sender == registry.admin, E_NOT_MARKET_OWNER);
         assert!(share_market::is_graduated(market), E_MARKET_NOT_GRADUATED);
 
         let market_id = object::uid_to_address(share_market::get_market_uid(market));
@@ -319,6 +484,12 @@ module cord::graduation {
         } else {
             @0x0
         }
+    }
+    public fun has_prepared_initial_liquidity<T>(vault: &CreatorTokenVault<T>): bool {
+        dynamic_field::exists_with_type<u8, bool>(&vault.id, INITIAL_LIQUIDITY_PREPARED_FIELD_NAME)
+    }
+    public fun has_seeded_initial_liquidity<T>(vault: &CreatorTokenVault<T>): bool {
+        dynamic_field::exists_with_type<u8, bool>(&vault.id, INITIAL_LIQUIDITY_SEEDED_FIELD_NAME)
     }
 
     #[test_only]

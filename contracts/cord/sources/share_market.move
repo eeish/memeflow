@@ -6,6 +6,8 @@
 /// - Bonding curve uses x = holders after buy / current holders for sell:
 ///   p(x) = 0.02 + 0.35/(x+3) + 1/(TERM2_DENOM_BASE-x) SUI,
 ///   where TERM2_DENOM_BASE is generated from deploy config.
+/// - Sells incur a 15% fee (SELL_FEE_BPS) retained in the treasury.
+/// - Graduation eligibility is based on total_buys (cumulative), not current holders.
 module cord::share_market {
     use cord::runtime_config;
     use sui::balance::{Self as balance, Balance};
@@ -24,6 +26,10 @@ module cord::share_market {
     const PRICE_TERM1_NUM: u64 = 350_000_000;     // 0.35 SUI numerator
     const PRICE_TERM2_NUM: u64 = 1_000_000_000;   // 1.0 SUI numerator
     const TERM1_OFFSET: u64 = 3;                  // x + 3
+
+    /// 15% sell fee retained in treasury; seller receives 85% of gross refund.
+    const SELL_FEE_BPS: u64 = 1_500;
+    const BPS_DENOMINATOR: u64 = 10_000;
 
     const E_SELF_PURCHASE: u64 = 1;
     const E_SUPPLY_LIMIT_EXCEEDED: u64 = 2;
@@ -51,7 +57,8 @@ module cord::share_market {
         market_id: address,
         seller: address,
         creator: address,
-        refund_mist: u64,
+        refund_mist: u64,   // net payout to seller (after 15% fee)
+        fee_mist: u64,      // amount retained in treasury
         new_holders: u64,
     }
 
@@ -62,10 +69,13 @@ module cord::share_market {
     /// Phase 1 Market:
     /// - holders == supply (1 share per wallet)
     /// - positions tracks whether an address is currently a holder
+    /// - total_buys is the cumulative buy count (never decremented on sell);
+    ///   graduation eligibility is checked against this, not holders.
     public struct Market has key, store {
         id: object::UID,
         owner: address,
         holders: u64,                 // current holders count (0..max_supply)
+        total_buys: u64,              // cumulative buys; used for graduation threshold
         treasury: Balance<SUI>,       // accumulated revenue from sales
         positions: Table<address, bool>,
         holder_list: vector<address>, // iterable holder addresses for graduation
@@ -94,6 +104,7 @@ module cord::share_market {
             id: object::new(ctx),
             owner: sender,
             holders: 1,
+            total_buys: 1,
             treasury: balance::zero<SUI>(),
             positions: table::new<address, bool>(ctx),
             holder_list: vector[sender],
@@ -148,13 +159,16 @@ module cord::share_market {
     }
 
     /// Optional helper for UI quoting: current sell refund (aborts if empty)
+    /// Returns the net refund a seller would receive (gross minus 15% fee).
     public fun quote_current_sell_refund_mist(market: &Market): u64 {
         assert!(market.holders > 0, E_ZERO_SUPPLY);
-        price_mist(market.holders)
+        let gross = price_mist(market.holders);
+        gross * (BPS_DENOMINATOR - SELL_FEE_BPS) / BPS_DENOMINATOR
     }
 
     public fun get_market_owner(market: &Market): address { market.owner }
     public fun get_market_holders(market: &Market): u64 { market.holders }
+    public fun get_total_buys(market: &Market): u64 { market.total_buys }
     public fun get_max_supply(): u64 { runtime_config::max_supply() }
 
     /// =============================
@@ -203,6 +217,7 @@ module cord::share_market {
         table::add(&mut market.positions, buyer, true);
         market.holder_list.push_back(buyer);
         market.holders = new_holders;
+        market.total_buys = market.total_buys + 1;
 
         event::emit(SharePurchased {
             market_id: object::uid_to_address(&market.id),
@@ -229,16 +244,20 @@ module cord::share_market {
         assert!(market.holders > 0, E_ZERO_SUPPLY);
         assert!(table::contains(&market.positions, seller), E_NOT_HOLDER);
 
-        // refund uses x = current holders before sell
-        let refund = price_mist(market.holders);
+        // gross refund = bonding curve price at current holders
+        // net refund (85%) is paid to the seller; the 15% fee stays in treasury.
+        let gross = price_mist(market.holders);
+        let net_refund = gross * (BPS_DENOMINATOR - SELL_FEE_BPS) / BPS_DENOMINATOR;
+        let fee = gross - net_refund;
 
-        // ensure treasury can pay (no withdraw in Phase 1, so this is stable)
+        // treasury only needs to cover the net payout; fee portion was never deducted.
         let bal_val = balance::value(&market.treasury);
-        assert!(bal_val >= refund, E_INSUFFICIENT_TREASURY);
+        assert!(bal_val >= net_refund, E_INSUFFICIENT_TREASURY);
 
-        let out_bal = balance::split(&mut market.treasury, refund);
+        let out_bal = balance::split(&mut market.treasury, net_refund);
         let out_coin = coin::from_balance(out_bal, ctx);
         transfer::public_transfer(out_coin, seller);
+        // `fee` remains in market.treasury implicitly (no split performed).
 
         // update holder table + state
         table::remove(&mut market.positions, seller);
@@ -260,7 +279,8 @@ module cord::share_market {
             market_id: object::uid_to_address(&market.id),
             seller,
             creator: market.owner,
-            refund_mist: refund,
+            refund_mist: net_refund,
+            fee_mist: fee,
             new_holders: market.holders,
         });
     }

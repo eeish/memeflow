@@ -157,6 +157,46 @@ export interface CreatorTokenBuildResponse {
   dependencies: string[];
 }
 
+export interface RecordSwapRequest {
+  pool_id: string;
+  trader: string;
+  side: 'buy' | 'sell';
+  sui_amount_mist: number;
+  token_amount: number;
+  price_sui: number;
+  timestamp_ms: number;
+  tx_digest?: string;
+}
+
+export interface OhlcvCandle {
+  time_ms: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume_sui: number;
+  trade_count: number;
+}
+
+export type OhlcvInterval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+
+export interface GraduationLaunchStatus {
+  owner_address: string;
+  market_id: string;
+  token_name: string;
+  token_symbol: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  step: string;
+  error?: string;
+  package_id?: string;
+  token_type?: string;
+  vault_id?: string;
+  pool_id?: string;
+  operator_address: string;
+  created_at: string;
+  updated_at: string;
+}
+
 class ApiService {
   private async request<T>(
     endpoint: string, 
@@ -217,6 +257,25 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  }
+
+  async requestGraduationLaunch(payload: {
+    owner_address: string;
+    market_id: string;
+    token_name: string;
+    token_symbol: string;
+    auth_nonce: string;
+    auth_timestamp_ms: number;
+    auth_signature: string;
+  }): Promise<ApiResponse<GraduationLaunchStatus>> {
+    return this.request<GraduationLaunchStatus>('/graduation/launch', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getGraduationLaunchStatus(ownerAddress: string): Promise<ApiResponse<GraduationLaunchStatus>> {
+    return this.request<GraduationLaunchStatus>(`/graduation/status/${ownerAddress}`);
   }
 
   async getUser(userId: string): Promise<ApiResponse<User>> {
@@ -415,7 +474,7 @@ class ApiService {
     formData.append('user_id', userId);
 
     console.log('📦 FormData contents:');
-    for (let [key, value] of formData.entries()) {
+    for (const [key, value] of formData.entries()) {
       console.log(key, value);
     }
 
@@ -434,6 +493,24 @@ class ApiService {
       console.error('Batch upload failed:', error);
       throw error;
     }
+  }
+
+  // AMM OHLCV endpoints
+  async recordSwap(req: RecordSwapRequest): Promise<ApiResponse<string>> {
+    return this.request<string>(`/amm/${req.pool_id}/swap`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  async getOhlcv(
+    poolId: string,
+    interval: OhlcvInterval = '5m',
+    limit = 200,
+  ): Promise<ApiResponse<OhlcvCandle[]>> {
+    return this.request<OhlcvCandle[]>(
+      `/amm/${poolId}/ohlcv?interval=${interval}&limit=${limit}`,
+    );
   }
 
   // Health check

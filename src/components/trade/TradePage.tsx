@@ -5,9 +5,11 @@ import { Button } from '../ui-simple/Button';
 import { Card } from '../ui-simple/Card';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { useShareMarket, calculatePriceMist, formatMistToSui } from '../../hooks/useShareMarket';
-import { useDeepBook, type DeepBookQuote } from '../../hooks/useDeepBook';
+import { formatMistAmount, formatTokenAmount, useAmmPool } from '../../hooks/useAmmPool';
 import { useContractAddresses } from '../../hooks/useContractsSocial';
 import { apiService } from '../../lib/api';
+import { useOhlcv } from '../../hooks/useOhlcv';
+import { CandlestickChart } from './CandlestickChart';
 import {
   GRADUATION_THRESHOLD,
   MAX_SUPPLY,
@@ -55,7 +57,6 @@ const AVATAR_GRADIENTS = [
 
 const MIST_PER_SUI = 1_000_000_000;
 const TOKEN_SCALAR = 1_000_000_000;
-const DEFAULT_SLIPPAGE_BPS = 100;
 
 function mistToSui(mist: bigint): number {
   return Number(mist) / MIST_PER_SUI;
@@ -78,6 +79,18 @@ function formatAssetAmount(value: number): string {
   if (value < 1) return value.toFixed(4);
   if (value < 1_000) return value.toFixed(3);
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function parseDecimalAmount(raw: string, decimals = 9): bigint {
+  const normalized = raw.trim();
+  if (!normalized) return 0n;
+  const [wholePart, fractionPart = ''] = normalized.split('.');
+  const whole = wholePart.replace(/[^\d]/g, '');
+  const fraction = fractionPart.replace(/[^\d]/g, '').slice(0, decimals);
+  if (!whole && !fraction) return 0n;
+  const paddedFraction = fraction.padEnd(decimals, '0');
+  const combined = `${whole || '0'}${paddedFraction}`;
+  return BigInt(combined);
 }
 
 function holderTier(rank: number): { label: string; className: string } {
@@ -312,33 +325,29 @@ function ShareTradePanel({
 function TokenMarketOverviewCard({
   symbol,
   launchPriceSui,
-  poolAvailable,
-  marketState,
+  poolId,
+  tokenType,
 }: {
   symbol: string;
   launchPriceSui: number;
-  poolAvailable: boolean;
-  marketState: ReturnType<typeof useDeepBook>['marketState'];
+  poolId?: string;
+  tokenType?: string;
 }) {
-  const displayedPrice = marketState.midPriceSui ?? launchPriceSui;
+  const { poolAvailable, marketState, isLoading } = useAmmPool(poolId, tokenType);
 
   return (
     <Card className="p-4">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <div className="text-2xl font-semibold text-gray-900">
-            {formatSui(displayedPrice)} SUI
+            {formatSui(launchPriceSui)} SUI
           </div>
           <div className="mt-0.5 text-xs text-gray-400">
-            {poolAvailable ? `DeepBook mid price · $${symbol}` : `Launch reference price · $${symbol}`}
+            Launch reference price · ${symbol}
           </div>
         </div>
-        <span className={`rounded px-2 py-0.5 text-[11px] font-medium ${
-          poolAvailable
-            ? 'bg-emerald-50 text-emerald-600'
-            : 'bg-amber-50 text-amber-600'
-        }`}>
-          {poolAvailable ? 'Pool live' : 'Awaiting pool'}
+        <span className="rounded bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-600">
+          Phase 2
         </span>
       </div>
 
@@ -350,29 +359,36 @@ function TokenMarketOverviewCard({
           </div>
         </div>
         <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3">
-          <div className="text-[11px] uppercase tracking-wide text-gray-400">Current Mid</div>
+          <div className="text-[11px] uppercase tracking-wide text-gray-400">Current Price</div>
           <div className="mt-1 font-mono text-sm font-semibold text-gray-900">
-            {marketState.midPriceSui != null ? `${formatSui(marketState.midPriceSui)} SUI` : '—'}
+            {poolAvailable && marketState ? `${formatSui(marketState.spotPriceSui)} SUI` : isLoading ? '…' : 'Awaiting pool'}
           </div>
         </div>
         <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3">
-          <div className="text-[11px] uppercase tracking-wide text-gray-400">Tick Size</div>
+          <div className="text-[11px] uppercase tracking-wide text-gray-400">Pool Reserves</div>
           <div className="mt-1 font-mono text-sm font-semibold text-gray-900">
-            {marketState.tickSize != null ? formatAssetAmount(marketState.tickSize) : '—'}
+            {poolAvailable && marketState
+              ? `${formatAssetAmount(formatMistAmount(marketState.suiReserveMist))} SUI / ${formatAssetAmount(formatTokenAmount(marketState.tokenReserve))} ${symbol}`
+              : isLoading
+              ? '…'
+              : 'Not initialized'}
           </div>
         </div>
         <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3">
-          <div className="text-[11px] uppercase tracking-wide text-gray-400">Minimum Size</div>
+          <div className="text-[11px] uppercase tracking-wide text-gray-400">Pool Activity</div>
           <div className="mt-1 font-mono text-sm font-semibold text-gray-900">
-            {marketState.minSize != null ? `${formatAssetAmount(marketState.minSize)} ${symbol}` : '—'}
+            {poolAvailable && marketState
+              ? `${(marketState.feeBps / 100).toFixed(2)}% fee · ${marketState.totalSwaps} swaps`
+              : isLoading
+              ? '…'
+              : 'Launch pending'}
           </div>
         </div>
       </div>
 
       <p className="mt-4 text-xs text-gray-500">
-        {poolAvailable
-          ? 'Swaps execute against current DeepBook orderbook liquidity. Review output and DEEP fee before confirming.'
-          : 'Token trading becomes available after the creator registers a DeepBook pool for this token.'}
+        Phase 2 trades route through the protocol-owned AMM. Launch price is preserved from the
+        Phase 1 graduation point, and swap fees remain inside the pool.
       </p>
     </Card>
   );
@@ -380,36 +396,48 @@ function TokenMarketOverviewCard({
 
 function TokenTradePanel({
   symbol,
+  poolId,
   tokenType,
-  deepBook,
   onTradeComplete,
 }: {
   symbol: string;
+  poolId?: string;
   tokenType?: string;
-  deepBook: ReturnType<typeof useDeepBook>;
   onTradeComplete: () => void;
 }) {
   const account = useCurrentAccount();
   const client = useSuiClient();
-  const { poolAvailable, isLoading: poolLoading, error: poolError, marketState, getQuote, placeOrder } = deepBook;
-
-  const [side, setSide] = useState<'buy' | 'sell'>('buy');
-  const [amountInput, setAmountInput] = useState('');
-  const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [reviewMode, setReviewMode] = useState(false);
-  const [quote, setQuote] = useState<DeepBookQuote | null>(null);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [quoteLoading, setQuoteLoading] = useState(false);
+  const { poolAvailable, marketState, isLoading, isSubmitting, error, refresh, getQuote, buyExactSuiForTokens, sellExactTokensForSui } = useAmmPool(poolId, tokenType);
   const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
   const [suiBalance, setSuiBalance] = useState<bigint | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [balanceRefreshKey, setBalanceRefreshKey] = useState(0);
+  const [side, setSide] = useState<'buy' | 'sell'>('buy');
+  const [amount, setAmount] = useState('');
+  const [slippageBps, setSlippageBps] = useState(100);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
 
-  const parsedAmount = Number.parseFloat(amountInput) || 0;
   const tokenBalanceValue = tokenBalance === null ? null : Number(tokenBalance) / TOKEN_SCALAR;
   const suiBalanceValue = suiBalance === null ? null : Number(suiBalance) / MIST_PER_SUI;
+  const tokenBalanceDisplay = tokenBalanceValue === null ? '…' : formatAssetAmount(tokenBalanceValue);
+  const suiBalanceDisplay = suiBalanceValue === null ? '…' : `${formatAssetAmount(suiBalanceValue)} SUI`;
+  const amountInRaw = useMemo(() => parseDecimalAmount(amount), [amount]);
+  const quoteOutRaw = useMemo(() => getQuote(side, amountInRaw), [amountInRaw, getQuote, side]);
+  const minOutRaw = useMemo(
+    () => (quoteOutRaw * BigInt(10_000 - slippageBps)) / 10_000n,
+    [quoteOutRaw, slippageBps],
+  );
+  const quoteOutDisplay = side === 'buy'
+    ? `${formatAssetAmount(formatTokenAmount(quoteOutRaw))} ${symbol}`
+    : `${formatAssetAmount(formatMistAmount(quoteOutRaw))} SUI`;
+  const minOutDisplay = side === 'buy'
+    ? `${formatAssetAmount(formatTokenAmount(minOutRaw))} ${symbol}`
+    : `${formatAssetAmount(formatMistAmount(minOutRaw))} SUI`;
+  const exceedsBalance = side === 'buy'
+    ? amountInRaw > (suiBalance ?? 0n)
+    : amountInRaw > (tokenBalance ?? 0n);
+  const canReview = !!account && poolAvailable && amountInRaw > 0n && !exceedsBalance && quoteOutRaw > 0n;
 
   useEffect(() => {
     if (!account?.address) {
@@ -445,346 +473,233 @@ function TokenTradePanel({
     };
   }, [account?.address, balanceRefreshKey, client, tokenType]);
 
-  useEffect(() => {
-    if (!poolAvailable || parsedAmount <= 0) {
-      setQuote(null);
-      setQuoteError(null);
-      setQuoteLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setQuoteLoading(true);
-    setQuoteError(null);
-
-    getQuote(side, parsedAmount, slippageBps)
-      .then((nextQuote) => {
-        if (!cancelled) {
-          setQuote(nextQuote);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setQuote(null);
-          setQuoteError(error instanceof Error ? error.message : 'Failed to load quote.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setQuoteLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [getQuote, parsedAmount, poolAvailable, side, slippageBps]);
-
-  const resetTradeState = (nextSide?: 'buy' | 'sell') => {
-    setAmountInput('');
-    setQuote(null);
-    setQuoteError(null);
-    setFeedback(null);
-    setReviewMode(false);
-    if (nextSide) {
-      setSide(nextSide);
-    }
-  };
-
-  const quoteOutput = side === 'buy' ? quote?.baseOut : quote?.suiOut;
-  const tokenBalanceDisplay = tokenBalanceValue === null ? '…' : formatAssetAmount(tokenBalanceValue);
-  const suiBalanceDisplay = suiBalanceValue === null ? '…' : `${formatAssetAmount(suiBalanceValue)} SUI`;
-  const deepBalanceDisplay = marketState.deepBalance === null ? '—' : `${formatAssetAmount(marketState.deepBalance)} DEEP`;
-
-  let validationError: string | null = null;
-  if (parsedAmount <= 0 && amountInput.trim()) {
-    validationError = 'Enter an amount greater than zero.';
-  } else if (side === 'sell' && tokenBalanceValue !== null && parsedAmount > tokenBalanceValue + 1e-9) {
-    validationError = `Insufficient ${symbol} balance.`;
-  } else if (side === 'buy' && suiBalanceValue !== null && parsedAmount > suiBalanceValue + 1e-9) {
-    validationError = 'Insufficient SUI balance.';
-  } else if (quote && marketState.deepBalance !== null && quote.deepRequired > marketState.deepBalance + 1e-9) {
-    validationError = `This trade needs ${formatAssetAmount(quote.deepRequired)} DEEP for fees.`;
-  }
-
-  const handleReview = () => {
-    if (!quote || !quoteOutput || validationError) return;
-    setReviewMode(true);
-    setFeedback(null);
-  };
-
   const handleConfirmTrade = async () => {
-    if (!quote || !parsedAmount) return;
-
-    setIsSubmitting(true);
+    if (!canReview) return;
     setFeedback(null);
-    const result = await placeOrder(side, parsedAmount, quote);
+
+    const result = side === 'buy'
+      ? await buyExactSuiForTokens(amountInRaw, minOutRaw)
+      : await sellExactTokensForSui(amountInRaw, minOutRaw);
 
     if (result.success) {
-      setFeedback({
-        kind: 'success',
-        text: `${side === 'buy' ? 'Buy' : 'Sell'} trade submitted.`,
-      });
-      setReviewMode(false);
-      setAmountInput('');
-      setQuote(null);
+      // Record swap for OHLCV chart
+      if (poolId && account?.address && quoteOutRaw > 0n) {
+        const suiMist = side === 'buy' ? Number(amountInRaw) : Number(quoteOutRaw);
+        const tokenAmt = side === 'buy' ? Number(quoteOutRaw) : Number(amountInRaw);
+        const priceSui = tokenAmt > 0 ? (suiMist / 1e9) / (tokenAmt / 1e9) : 0;
+        apiService.recordSwap({
+          pool_id: poolId,
+          trader: account.address,
+          side,
+          sui_amount_mist: suiMist,
+          token_amount: tokenAmt,
+          price_sui: priceSui,
+          timestamp_ms: Date.now(),
+          tx_digest: result.txDigest,
+        }).catch(() => undefined);
+      }
+
+      setFeedback({ kind: 'success', text: `${side === 'buy' ? 'Bought' : 'Sold'} ${symbol} successfully.` });
+      setAmount('');
+      setReviewOpen(false);
       setBalanceRefreshKey((value) => value + 1);
+      refresh().catch(() => undefined);
       onTradeComplete();
     } else {
-      setFeedback({
-        kind: 'error',
-        text: result.error || 'Transaction failed.',
-      });
+      setFeedback({ kind: 'error', text: result.error || 'Swap failed.' });
     }
-
-    setIsSubmitting(false);
   };
 
   return (
     <Card className="p-4">
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-base font-semibold text-gray-900">${symbol} Token</h3>
-        <span className="rounded bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-600">Phase 2</span>
+        <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">Phase 2</span>
       </div>
 
-      {!poolAvailable ? (
-        <div className="space-y-3">
-          <div className="rounded-md border border-dashed border-gray-200 px-4 py-5 text-center">
-            <p className="text-sm font-medium text-gray-700">${symbol} has launched</p>
-            <p className="mt-1 text-xs text-gray-400">
-              No DeepBook pool is registered yet.
-              <br />
-              Trading will appear here once the pool is live.
-            </p>
-          </div>
+      <div className="space-y-3">
+        <div className="flex rounded-lg bg-gray-100 p-1">
+          {(['buy', 'sell'] as const).map((nextSide) => (
+            <button
+              key={nextSide}
+              onClick={() => {
+                setSide(nextSide);
+                setReviewOpen(false);
+                setFeedback(null);
+              }}
+              className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                side === nextSide ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {nextSide === 'buy' ? `Buy ${symbol}` : `Sell ${symbol}`}
+            </button>
+          ))}
+        </div>
 
+        <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-3 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-500">Wallet SUI</span>
+            <span className="font-mono font-medium text-gray-700">{suiBalanceDisplay}</span>
+          </div>
           {tokenType && (
-            <div className="flex items-center justify-between px-1 text-xs text-gray-500">
-              <span>Your {symbol} balance</span>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-gray-500">Wallet {symbol}</span>
               <span className="font-mono font-medium text-gray-700">{tokenBalanceDisplay} {symbol}</span>
             </div>
           )}
-
-          {poolError && (
-            <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              {poolError}
-            </div>
-          )}
         </div>
-      ) : (
-        <div className="space-y-3">
-          <div className="flex rounded-md overflow-hidden border border-gray-200 text-sm font-medium">
+
+        {!account ? (
+          <p className="py-1 text-center text-xs text-gray-400">Connect wallet to view balances</p>
+        ) : !poolAvailable ? (
+          <div className="rounded-md border border-dashed border-gray-200 px-4 py-5 text-center">
+            <p className="text-sm font-medium text-gray-700">Awaiting AMM pool</p>
+            <p className="mt-1 text-xs text-gray-400">
+              The token has launched, but Phase 2 liquidity has not been initialized yet.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="rounded-md border border-gray-100 bg-white px-3 py-3">
+              <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
+                <span>{side === 'buy' ? 'Spend' : `Sell ${symbol}`}</span>
+                <span>
+                  Balance:{' '}
+                  {side === 'buy'
+                    ? suiBalanceDisplay
+                    : `${tokenBalanceDisplay} ${symbol}`}
+                </span>
+              </div>
+              <div className="flex items-end gap-3">
+                <input
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(event) => {
+                    setAmount(event.target.value.replace(/[^0-9.]/g, ''));
+                    setReviewOpen(false);
+                    setFeedback(null);
+                  }}
+                  placeholder="0.0"
+                  className="w-full border-0 bg-transparent px-0 py-1 text-2xl font-semibold text-gray-900 outline-none placeholder:text-gray-300"
+                />
+                <span className="pb-2 text-sm font-medium text-gray-500">
+                  {side === 'buy' ? 'SUI' : symbol}
+                </span>
+              </div>
+            </div>
+
+            <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">Expected output</span>
+                <span className="font-mono font-medium text-gray-900">
+                  {quoteOutRaw > 0n ? quoteOutDisplay : '—'}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-gray-500">Minimum after slippage</span>
+                <span className="font-mono font-medium text-gray-700">
+                  {quoteOutRaw > 0n ? minOutDisplay : '—'}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-gray-500">Pool price</span>
+                <span className="font-mono font-medium text-gray-700">
+                  {marketState ? `${formatSui(marketState.spotPriceSui)} SUI` : '—'}
+                </span>
+              </div>
+            </div>
+
             <button
-              onClick={() => resetTradeState('buy')}
-              className={`flex-1 py-1.5 transition-colors ${
-                side === 'buy' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'
-              }`}
+              onClick={() => setAdvancedOpen((value) => !value)}
+              className="flex w-full items-center justify-between rounded-md border border-gray-100 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
             >
-              Buy
+              <span>Advanced</span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
             </button>
-            <button
-              onClick={() => resetTradeState('sell')}
-              className={`flex-1 py-1.5 transition-colors ${
-                side === 'sell' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'
-              }`}
-            >
-              Sell
-            </button>
-          </div>
 
-          <div>
-            <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
-              <label>
-                {side === 'buy' ? 'You pay (SUI)' : `You sell (${symbol})`}
-              </label>
-              <span>
-                {side === 'buy'
-                  ? `Balance: ${suiBalanceDisplay}`
-                  : `Balance: ${tokenBalanceDisplay} ${symbol}`}
-              </span>
-            </div>
-            <input
-              type="number"
-              min="0"
-              step="any"
-              placeholder="0.00"
-              value={amountInput}
-              onChange={(event) => {
-                setAmountInput(event.target.value);
-                setFeedback(null);
-                setReviewMode(false);
-              }}
-              className="w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-mono text-gray-900 outline-none focus:ring-1 focus:ring-gray-300"
-            />
-          </div>
-
-          <div className="flex items-center justify-between rounded-md border border-gray-100 bg-gray-50 px-3 py-2.5 text-sm">
-            <span className="text-gray-500">
-              {side === 'buy' ? `Estimated receive (${symbol})` : 'Estimated receive (SUI)'}
-            </span>
-            <span className="font-mono font-semibold text-gray-900">
-              {poolLoading || quoteLoading
-                ? '…'
-                : quoteOutput
-                ? side === 'buy'
-                  ? `${formatAssetAmount(quoteOutput)} ${symbol}`
-                  : `${formatAssetAmount(quoteOutput)} SUI`
-                : '—'}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between px-0.5 text-xs text-gray-500">
-            <span>DEEP fee budget</span>
-            <span className="font-mono text-gray-700">
-              {quote ? `${formatAssetAmount(quote.deepRequired)} DEEP` : deepBalanceDisplay}
-            </span>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setAdvancedOpen((open) => !open)}
-            className="flex w-full items-center justify-between rounded-md border border-gray-200 px-3 py-2 text-left text-xs text-gray-600 transition-colors hover:bg-gray-50"
-          >
-            <span>Advanced</span>
-            <ChevronDown className={`h-4 w-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
-          </button>
-
-          {advancedOpen && (
-            <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-3 text-xs text-gray-600">
-              <div className="mb-2 font-medium text-gray-700">Slippage tolerance</div>
-              <div className="flex gap-2">
-                {[50, 100, 200].map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => {
-                      setSlippageBps(preset);
-                      setReviewMode(false);
-                    }}
-                    className={`rounded px-2 py-1 font-medium ${
-                      slippageBps === preset
-                        ? 'bg-gray-900 text-white'
-                        : 'bg-white text-gray-600 ring-1 ring-gray-200'
-                    }`}
-                  >
-                    {(preset / 100).toFixed(preset === 50 ? 1 : 0)}%
-                  </button>
-                ))}
+            {advancedOpen && (
+              <div className="rounded-md border border-gray-100 bg-gray-50 px-3 py-3 text-sm">
+                <label className="block text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Slippage tolerance
+                </label>
+                <input
+                  type="number"
+                  min={10}
+                  max={2_000}
+                  step={10}
+                  value={slippageBps}
+                  onChange={(event) => setSlippageBps(Math.max(10, Math.min(2_000, Number(event.target.value) || 100)))}
+                  className="mt-2 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
+                />
+                <p className="mt-2 text-xs text-gray-500">
+                  Enter basis points. `100` = 1.00% maximum slippage.
+                </p>
               </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-gray-400">Tick Size</div>
-                  <div className="mt-1 font-mono text-gray-700">
-                    {marketState.tickSize != null ? formatAssetAmount(marketState.tickSize) : '—'}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-gray-400">Minimum Order</div>
-                  <div className="mt-1 font-mono text-gray-700">
-                    {marketState.minSize != null ? `${formatAssetAmount(marketState.minSize)} ${symbol}` : '—'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+            )}
 
-          {quote && reviewMode ? (
-            <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
-              <div className="text-sm font-medium text-gray-900">Review trade</div>
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">{side === 'buy' ? 'You pay' : 'You sell'}</span>
-                  <span className="font-mono text-gray-900">
-                    {formatAssetAmount(parsedAmount)} {side === 'buy' ? 'SUI' : symbol}
+            {reviewOpen ? (
+              <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-3 text-sm">
+                <div className="font-medium text-blue-900">Review trade</div>
+                <div className="mt-2 flex items-center justify-between text-blue-800">
+                  <span>{side === 'buy' ? 'You pay' : `You sell`}</span>
+                  <span className="font-mono">
+                    {amount || '0'} {side === 'buy' ? 'SUI' : symbol}
                   </span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Estimated receive</span>
-                  <span className="font-mono text-gray-900">
-                    {quoteOutput
-                      ? `${formatAssetAmount(quoteOutput)} ${side === 'buy' ? symbol : 'SUI'}`
-                      : '—'}
-                  </span>
+                <div className="mt-2 flex items-center justify-between text-blue-800">
+                  <span>{side === 'buy' ? 'You receive' : 'Estimated receive'}</span>
+                  <span className="font-mono">{quoteOutDisplay}</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Minimum receive</span>
-                  <span className="font-mono text-gray-900">
-                    {quote.minOut != null
-                      ? `${formatAssetAmount(quote.minOut)} ${side === 'buy' ? symbol : 'SUI'}`
-                      : '—'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Mid price</span>
-                  <span className="font-mono text-gray-900">
-                    {quote.midPriceSui != null ? `${formatSui(quote.midPriceSui)} SUI` : '—'}
-                  </span>
-                </div>
-                {quote.priceImpactPct != null && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-500">Price impact</span>
-                    <span className="font-mono text-gray-900">{quote.priceImpactPct.toFixed(2)}%</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">DEEP fee</span>
-                  <span className="font-mono text-gray-900">{formatAssetAmount(quote.deepRequired)} DEEP</span>
+                <div className="mt-2 flex items-center justify-between text-blue-800">
+                  <span>Minimum output</span>
+                  <span className="font-mono">{minOutDisplay}</span>
                 </div>
               </div>
+            ) : null}
 
-              <p className="text-[11px] text-gray-500">
-                Slippage tolerance is set to {(slippageBps / 100).toFixed(slippageBps === 50 ? 1 : 0)}%.
-              </p>
-
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setReviewMode(false)}
-                  disabled={isSubmitting}
-                  className="flex-1"
-                >
-                  Back
-                </Button>
-                <Button
-                  onClick={handleConfirmTrade}
-                  disabled={isSubmitting || !!validationError}
-                  className="flex-1 bg-gray-900 text-white hover:bg-gray-700"
-                >
-                  {isSubmitting ? 'Confirming…' : 'Confirm trade'}
-                </Button>
+            {(feedback || error || exceedsBalance) && (
+              <div
+                className={`rounded-md px-3 py-2 text-xs font-medium ${
+                  feedback?.kind === 'success'
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-red-50 text-red-700'
+                }`}
+              >
+                {feedback?.text || (exceedsBalance ? 'Entered amount exceeds your wallet balance.' : error)}
               </div>
-            </div>
-          ) : !account ? (
-            <p className="py-1 text-center text-xs text-gray-400">Connect wallet to trade</p>
-          ) : (
-            <Button
-              onClick={handleReview}
-              disabled={poolLoading || quoteLoading || !parsedAmount || !quoteOutput || !!validationError}
-              className="w-full bg-gray-900 text-white hover:bg-gray-700"
-            >
-              {quoteLoading ? 'Loading quote…' : 'Review trade'}
-            </Button>
-          )}
+            )}
 
-          {(poolError || quoteError || validationError) && (
-            <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              {validationError || quoteError || poolError}
+            <div className="flex gap-2">
+              <Button
+                onClick={() => {
+                  setBalanceRefreshKey((value) => value + 1);
+                  refresh().catch(() => undefined);
+                }}
+                className="flex-1 bg-gray-100 text-gray-700 hover:bg-gray-200"
+              >
+                Refresh
+              </Button>
+              <Button
+                onClick={() => {
+                  if (!reviewOpen) {
+                    setReviewOpen(true);
+                    return;
+                  }
+                  void handleConfirmTrade();
+                }}
+                disabled={!canReview || isLoading || isSubmitting}
+                className="flex-1 bg-gray-900 text-white hover:bg-gray-700"
+              >
+                {isSubmitting
+                  ? 'Submitting…'
+                  : reviewOpen
+                  ? 'Confirm Swap'
+                  : 'Review Trade'}
+              </Button>
             </div>
-          )}
-
-          {feedback && (
-            <div
-              className={`rounded-md px-3 py-2 text-xs font-medium ${
-                feedback.kind === 'success'
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : 'bg-red-50 text-red-700'
-              }`}
-            >
-              {feedback.text}
-            </div>
-          )}
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </Card>
   );
 }
@@ -930,14 +845,17 @@ export function TradePage({ market: initialMarket, onClose }: TradePageProps) {
     };
   }, [client, graduationRegistryId, snapshot.isGraduated, snapshot.objectId]);
 
-  const deepBook = useDeepBook(
-    snapshot.isGraduated ? activeMarket.poolId : undefined,
-    snapshot.isGraduated ? activeMarket.tokenType : undefined,
-  );
-
   const bondingPoints = useMemo(() => buildBondingCurve(snapshot.holders), [snapshot.holders]);
   const progress = graduationProgressPercent(snapshot.holders);
   const launchPriceSui = useMemo(() => mistToSui(calculatePriceMist(MAX_SUPPLY)), []);
+
+  const {
+    candles,
+    isLoading: ohlcvLoading,
+    interval: ohlcvInterval,
+    changeInterval: changeOhlcvInterval,
+    refresh: refreshOhlcv,
+  } = useOhlcv(snapshot.isGraduated ? activeMarket.poolId : undefined);
 
   const handleSwitchMarket = (holding: (typeof holdings)[number]) => {
     setActiveMarket({
@@ -956,6 +874,8 @@ export function TradePage({ market: initialMarket, onClose }: TradePageProps) {
     if (activeMarket.creatorAddress) {
       loadSnapshot(activeMarket.creatorAddress);
     }
+    // Refresh chart after a short delay to allow the backend to record the swap
+    setTimeout(() => refreshOhlcv(), 1500);
   };
 
   return (
@@ -999,12 +919,21 @@ export function TradePage({ market: initialMarket, onClose }: TradePageProps) {
         <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
           <section className="space-y-4">
             {snapshot.isGraduated ? (
-              <TokenMarketOverviewCard
-                symbol={symbol}
-                launchPriceSui={launchPriceSui}
-                poolAvailable={deepBook.poolAvailable}
-                marketState={deepBook.marketState}
-              />
+              <>
+                <CandlestickChart
+                  candles={candles}
+                  interval={ohlcvInterval}
+                  onIntervalChange={changeOhlcvInterval}
+                  isLoading={ohlcvLoading}
+                  symbol={symbol}
+                />
+                <TokenMarketOverviewCard
+                  symbol={symbol}
+                  launchPriceSui={launchPriceSui}
+                  poolId={activeMarket.poolId}
+                  tokenType={activeMarket.tokenType}
+                />
+              </>
             ) : (
               <BondingCurveChart points={bondingPoints} currentHolders={snapshot.holders} />
             )}
@@ -1046,8 +975,8 @@ export function TradePage({ market: initialMarket, onClose }: TradePageProps) {
             {snapshot.isGraduated ? (
               <TokenTradePanel
                 symbol={symbol}
+                poolId={activeMarket.poolId}
                 tokenType={activeMarket.tokenType}
-                deepBook={deepBook}
                 onTradeComplete={handleTradeComplete}
               />
             ) : (

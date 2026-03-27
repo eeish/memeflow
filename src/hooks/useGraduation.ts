@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useCurrentAccount, useSignAndExecuteTransaction, useSignPersonalMessage, useSuiClient } from '@mysten/dapp-kit';
-import { Transaction } from '@mysten/sui/transactions';
+import { useCurrentAccount, useSignPersonalMessage, useSuiClient } from '@mysten/dapp-kit';
 import { useShareMarket, calculatePriceMist } from './useShareMarket';
 import { useContractAddresses } from './useContractsSocial';
-import { apiService } from '../lib/api';
+import { apiService, type GraduationLaunchStatus } from '../lib/api';
 import {
   type GraduationState,
   type GraduationConfig,
@@ -11,55 +10,14 @@ import {
   getMarketPhase,
   resolveGraduationVaultMetadata,
 } from '../lib/graduation';
+import { useNetwork } from '../contexts/NetworkContext';
 
-const STORAGE_KEY_PREFIX = 'cord_graduation_';
-
-function getStorageKey(ownerAddress: string): string {
-  return `${STORAGE_KEY_PREFIX}${ownerAddress}`;
-}
-
-interface StoredGraduation {
-  tokenName: string;
-  tokenSymbol: string;
-  tokenPackageId?: string;
-  tokenType?: string;
-  tokenVaultId?: string;
-  graduatedAt: number;
-  treasuryBalanceMist: string; // bigint serialized as string
-  /** DeepBook pool object ID for this token/SUI pair — set after pool creation */
-  poolId?: string;
-}
-
-function loadGraduation(ownerAddress: string): StoredGraduation | null {
-  try {
-    const raw = localStorage.getItem(getStorageKey(ownerAddress));
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function saveGraduation(ownerAddress: string, data: StoredGraduation): void {
-  localStorage.setItem(getStorageKey(ownerAddress), JSON.stringify(data));
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function normalizeAddress(value: string): string {
-  return value.startsWith('0x') ? value : `0x${value}`;
-}
-
-function normalizeOwnerAddressForBuildAuth(value: string): string {
+function normalizeOwnerAddressForAuth(value: string): string {
   const stripped = value.trim().toLowerCase().replace(/^0x/, '');
   return `0x${stripped.padStart(64, '0')}`;
 }
 
-function generateBuildAuthNonce(): string {
+function generateAuthNonce(): string {
   const random = new Uint8Array(16);
   crypto.getRandomValues(random);
   return Array.from(random)
@@ -67,20 +25,21 @@ function generateBuildAuthNonce(): string {
     .join('');
 }
 
-function buildCreatorTokenAuthMessage(
+function buildGraduationLaunchAuthMessage(
   ownerAddress: string,
+  marketId: string,
   tokenName: string,
   tokenSymbol: string,
+  network: string,
   authTimestampMs: number,
   authNonce: string,
 ): string {
-  return `Cord Creator Token Build Authorization\n\nOwner: ${ownerAddress}\nToken Name: ${tokenName}\nToken Symbol: ${tokenSymbol}\nTimestamp: ${authTimestampMs}\nNonce: ${authNonce}\n\nSign this message to authorize creator token package compilation.`;
+  return `Cord Graduation Launch Authorization\n\nOwner: ${ownerAddress}\nMarket ID: ${marketId}\nToken Name: ${tokenName}\nToken Symbol: ${tokenSymbol}\nNetwork: ${network}\nTimestamp: ${authTimestampMs}\nNonce: ${authNonce}\n\nSign this message to authorize Cord to publish the creator token, graduate the market, initialize the Phase 2 AMM pool, and seed the launch liquidity using the Cord operator wallet.`;
 }
 
-/** Calculate total treasury from all share purchases (sum of bonding curve prices). */
 function calculateTreasury(holders: number): bigint {
   let total = 0n;
-  for (let i = 1; i <= holders; i++) {
+  for (let i = 1; i <= holders; i += 1) {
     total += calculatePriceMist(i);
   }
   return total;
@@ -88,37 +47,26 @@ function calculateTreasury(holders: number): bigint {
 
 export function useGraduation(ownerAddress?: string | null) {
   const { findMarketByOwner } = useShareMarket();
-  const { packageId, graduationRegistryId } = useContractAddresses();
+  const { graduationRegistryId } = useContractAddresses();
+  const { currentNetwork } = useNetwork();
   const account = useCurrentAccount();
   const client = useSuiClient();
-  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
   const { mutate: signPersonalMessage } = useSignPersonalMessage();
+
   const [isLoading, setIsLoading] = useState(true);
   const [holdersCount, setHoldersCount] = useState(0);
   const [marketFound, setMarketFound] = useState(false);
   const [marketGraduated, setMarketGraduated] = useState(false);
-  const [stored, setStored] = useState<StoredGraduation | null>(null);
+  const [launchStatus, setLaunchStatus] = useState<GraduationLaunchStatus | null>(null);
   const [vaultMetadata, setVaultMetadata] = useState<{
     tokenSymbol?: string;
     tokenName?: string;
     tokenType?: string;
     vaultId?: string;
     poolId?: string;
+    liquidityPrepared?: boolean;
+    initialLiquiditySeeded?: boolean;
   } | null>(null);
-
-  const executeTransaction = useCallback(
-    async (transaction: Transaction): Promise<any> =>
-      new Promise((resolve, reject) => {
-        signAndExecute(
-          { transaction },
-          {
-            onSuccess: resolve,
-            onError: reject,
-          },
-        );
-      }),
-    [signAndExecute],
-  );
 
   const signAuthMessage = useCallback(
     async (message: string): Promise<string> =>
@@ -134,88 +82,49 @@ export function useGraduation(ownerAddress?: string | null) {
     [signPersonalMessage],
   );
 
-  const resolveTxStatus = useCallback(
-    async (result: any): Promise<{ digest: string; status?: string; error?: string }> => {
-      const digest = result?.digest as string | undefined;
-      if (!digest) {
-        throw new Error('Transaction did not return a digest');
-      }
-
-      let status = result?.effects?.status?.status as string | undefined;
-      let statusError = result?.effects?.status?.error as string | undefined;
-      let lookupError: string | undefined;
-
-      if (!status) {
-        for (let attempt = 0; attempt < 6; attempt++) {
-          try {
-            const txBlock = await client.getTransactionBlock({
-              digest,
-              options: { showEffects: true },
-            });
-            status = txBlock.effects?.status?.status;
-            statusError = txBlock.effects?.status?.error || statusError;
-            if (status) break;
-          } catch (fetchErr: any) {
-            lookupError = fetchErr?.message || String(fetchErr);
-            if (attempt < 5) await delay(600);
-          }
-        }
-      }
-
-      return {
-        digest,
-        status,
-        error: statusError || lookupError,
-      };
-    },
-    [client],
-  );
-
-  const getTxBlockWithObjectChanges = useCallback(
-    async (digest: string): Promise<any> => {
-      let lastError: unknown;
-      for (let attempt = 0; attempt < 6; attempt++) {
-        try {
-          return await client.getTransactionBlock({
-            digest,
-            options: {
-              showEffects: true,
-              showObjectChanges: true,
-            },
-          });
-        } catch (err) {
-          lastError = err;
-          if (attempt < 5) await delay(600);
-        }
-      }
-      throw new Error(
-        `Failed to fetch transaction object changes: ${
-          lastError instanceof Error ? lastError.message : String(lastError)
-        }`,
-      );
-    },
-    [client],
-  );
-
-  // Load localStorage on mount / address change
-  useEffect(() => {
+  const refreshLaunchStatus = useCallback(async () => {
     if (!ownerAddress) {
-      setStored(null);
-      setVaultMetadata(null);
-      setIsLoading(false);
-      return;
+      setLaunchStatus(null);
+      return null;
     }
-    setStored(loadGraduation(ownerAddress));
-    setVaultMetadata(null);
+
+    try {
+      const response = await apiService.getGraduationLaunchStatus(ownerAddress);
+      if (response.success && response.data) {
+        setLaunchStatus(response.data);
+        return response.data;
+      }
+    } catch {
+      // No launch job exists yet or backend is unavailable.
+    }
+
+    setLaunchStatus(null);
+    return null;
   }, [ownerAddress]);
 
-  // Fetch on-chain market data
+  const refreshVaultMetadata = useCallback(async () => {
+    if (!ownerAddress || !graduationRegistryId || graduationRegistryId === '0x0') {
+      setVaultMetadata(null);
+      return null;
+    }
+    const market = await findMarketByOwner(ownerAddress);
+    if (!market) {
+      setVaultMetadata(null);
+      return null;
+    }
+    const resolved = await resolveGraduationVaultMetadata(client, graduationRegistryId, market.objectId);
+    setVaultMetadata(resolved);
+    return resolved;
+  }, [client, findMarketByOwner, graduationRegistryId, ownerAddress]);
+
   useEffect(() => {
     if (!ownerAddress) {
+      setIsLoading(false);
       setHoldersCount(0);
       setMarketFound(false);
       setMarketGraduated(false);
-      setIsLoading(false);
+      setLaunchStatus(null);
+      setVaultMetadata(null);
       return;
     }
 
@@ -228,7 +137,7 @@ export function useGraduation(ownerAddress?: string | null) {
         if (market) {
           setHoldersCount(market.holders);
           setMarketFound(true);
-          setMarketGraduated(!!market.graduated);
+          setMarketGraduated(Boolean(market.graduated));
         } else {
           setHoldersCount(0);
           setMarketFound(false);
@@ -236,77 +145,90 @@ export function useGraduation(ownerAddress?: string | null) {
         }
       })
       .catch(() => {
-        if (cancelled) return;
-        setMarketFound(false);
-        setMarketGraduated(false);
+        if (!cancelled) {
+          setMarketFound(false);
+          setMarketGraduated(false);
+        }
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
       });
 
+    refreshLaunchStatus().catch(() => undefined);
+
     return () => {
       cancelled = true;
     };
-  }, [ownerAddress, findMarketByOwner]);
+  }, [findMarketByOwner, ownerAddress, refreshLaunchStatus]);
 
-  // When the market is graduated, resolve any missing launch metadata from the on-chain
-  // CreatorTokenVault so viewers on other devices can still trade.
   useEffect(() => {
-    if (!marketGraduated || !graduationRegistryId || graduationRegistryId === '0x0') return;
+    if (!ownerAddress || (!marketGraduated && launchStatus?.status !== 'completed')) return;
+    refreshVaultMetadata().catch(() => undefined);
+  }, [launchStatus?.status, marketGraduated, ownerAddress, refreshVaultMetadata]);
+
+  useEffect(() => {
     if (!ownerAddress) return;
+    if (launchStatus?.status !== 'queued' && launchStatus?.status !== 'running') return;
 
-    let cancelled = false;
-
-    const resolveFromChain = async () => {
-      try {
-        const market = await findMarketByOwner(ownerAddress);
-        if (cancelled || !market) return;
-
-        const resolved = await resolveGraduationVaultMetadata(client, graduationRegistryId, market.objectId);
-        if (!cancelled) {
-          setVaultMetadata(resolved);
-        }
-      } catch {
-        if (!cancelled) {
-          setVaultMetadata(null);
-        }
+    const interval = window.setInterval(() => {
+      refreshLaunchStatus().catch(() => undefined);
+      if (marketGraduated || launchStatus.status === 'completed') {
+        refreshVaultMetadata().catch(() => undefined);
       }
+    }, 5000);
+
+    return () => {
+      window.clearInterval(interval);
     };
+  }, [launchStatus, marketGraduated, ownerAddress, refreshLaunchStatus, refreshVaultMetadata]);
 
-    resolveFromChain();
-    return () => { cancelled = true; };
-  }, [marketGraduated, graduationRegistryId, ownerAddress, findMarketByOwner, client]);
-
-  // Derive graduation state.
-  // Source of truth for "graduated/launched" is on-chain market.graduated.
   const graduationState: GraduationState | null = (() => {
     if (!ownerAddress || !marketFound) return null;
 
     const holders = Math.max(1, holdersCount);
     const treasury = calculateTreasury(holders);
+    const pendingLaunch = launchStatus?.status === 'queued' || launchStatus?.status === 'running';
 
-    if (marketGraduated) {
+    if (marketGraduated || launchStatus?.status === 'completed') {
       return {
         phase: 'graduated',
         holdersCount: holders,
         graduationThreshold: GRADUATION_THRESHOLD,
         treasuryBalanceMist: treasury,
-        tokenName: stored?.tokenName || vaultMetadata?.tokenName,
-        tokenSymbol: stored?.tokenSymbol || vaultMetadata?.tokenSymbol || undefined,
-        tokenPackageId: stored?.tokenPackageId,
-        tokenType: stored?.tokenType || vaultMetadata?.tokenType,
-        tokenVaultId: stored?.tokenVaultId || vaultMetadata?.vaultId,
-        graduatedAt: stored?.graduatedAt,
+        tokenName: vaultMetadata?.tokenName || launchStatus?.token_name,
+        tokenSymbol: vaultMetadata?.tokenSymbol || launchStatus?.token_symbol || undefined,
+        tokenPackageId: launchStatus?.package_id || vaultMetadata?.tokenType?.split('::')[0],
+        tokenType: vaultMetadata?.tokenType || launchStatus?.token_type,
+        tokenVaultId: vaultMetadata?.vaultId || launchStatus?.vault_id,
         liquidityPooled: treasury,
-        poolId: stored?.poolId || vaultMetadata?.poolId,
+        poolId: vaultMetadata?.poolId || launchStatus?.pool_id,
+        liquidityPrepared: vaultMetadata?.liquidityPrepared,
+        initialLiquiditySeeded:
+          vaultMetadata?.initialLiquiditySeeded || !!(vaultMetadata?.poolId || launchStatus?.pool_id),
+        launchStatus: launchStatus?.status,
+        launchStep: launchStatus?.step,
+        launchError: launchStatus?.error,
+        operatorAddress: launchStatus?.operator_address,
       };
     }
 
     return {
-      phase: getMarketPhase(holders),
+      phase: pendingLaunch ? 'graduating' : getMarketPhase(holders),
       holdersCount: holders,
       graduationThreshold: GRADUATION_THRESHOLD,
       treasuryBalanceMist: treasury,
+      tokenName: launchStatus?.token_name,
+      tokenSymbol: launchStatus?.token_symbol,
+      tokenPackageId: launchStatus?.package_id,
+      tokenType: launchStatus?.token_type,
+      tokenVaultId: launchStatus?.vault_id,
+      poolId: launchStatus?.pool_id,
+      liquidityPrepared: vaultMetadata?.liquidityPrepared,
+      initialLiquiditySeeded: vaultMetadata?.initialLiquiditySeeded,
+      launchStatus: launchStatus?.status,
+      launchStep: launchStatus?.step,
+      launchError: launchStatus?.error,
+      operatorAddress: launchStatus?.operator_address,
     };
   })();
 
@@ -315,254 +237,58 @@ export function useGraduation(ownerAddress?: string | null) {
       if (!ownerAddress) throw new Error('No owner address');
       if (!account?.address) throw new Error('Wallet not connected');
       if (account.address.toLowerCase() !== ownerAddress.toLowerCase()) {
-        throw new Error('Only the market owner can launch this token');
-      }
-      if (!packageId || packageId === '0x0') {
-        throw new Error('Contracts not deployed');
-      }
-      if (!graduationRegistryId || graduationRegistryId === '0x0') {
-        throw new Error('Graduation registry is not configured. Redeploy contracts with graduation module enabled.');
+        throw new Error('Only the market owner can authorize token launch');
       }
 
       const market = await findMarketByOwner(ownerAddress);
       if (!market) {
         throw new Error('Market not found for this user');
       }
-      const alreadyLaunched =
-        market.graduated && !!stored?.tokenPackageId && !!stored?.tokenType;
-      if (alreadyLaunched) {
-        throw new Error('Token has already been launched');
-      }
       if (!market.graduated && market.holders < GRADUATION_THRESHOLD) {
         throw new Error(`Need at least ${GRADUATION_THRESHOLD} holders before launch`);
       }
 
-      const rollbackGraduationIfNeeded = async (): Promise<void> => {
-        const rollbackAmount = calculateTreasury(Math.max(1, market.holders));
-        const rollbackTx = new Transaction();
-        const [rollbackCoin] = rollbackTx.splitCoins(rollbackTx.gas, [
-          rollbackTx.pure.u64(rollbackAmount.toString()),
-        ]);
-        rollbackTx.moveCall({
-          target: `${packageId}::graduation::rollback_graduation`,
-          arguments: [
-            rollbackTx.object(graduationRegistryId),
-            rollbackTx.object(market.objectId),
-            rollbackCoin,
-          ],
-        });
+      const normalizedOwnerAddress = normalizeOwnerAddressForAuth(ownerAddress);
+      const normalizedTokenName = config.tokenName.trim();
+      const normalizedTokenSymbol = config.tokenSymbol.trim().toUpperCase();
+      const authTimestampMs = Date.now();
+      const authNonce = generateAuthNonce();
+      const authMessage = buildGraduationLaunchAuthMessage(
+        normalizedOwnerAddress,
+        market.objectId,
+        normalizedTokenName,
+        normalizedTokenSymbol,
+        currentNetwork,
+        authTimestampMs,
+        authNonce,
+      );
+      const authSignature = await signAuthMessage(authMessage);
 
-        const rollbackResult = await executeTransaction(rollbackTx);
-        const rollbackStatus = await resolveTxStatus(rollbackResult);
-        if (rollbackStatus.status && rollbackStatus.status !== 'success') {
-          throw new Error(rollbackStatus.error || 'Graduation rollback failed');
-        }
+      const response = await apiService.requestGraduationLaunch({
+        owner_address: normalizedOwnerAddress,
+        market_id: market.objectId,
+        token_name: normalizedTokenName,
+        token_symbol: normalizedTokenSymbol,
+        auth_nonce: authNonce,
+        auth_timestamp_ms: authTimestampMs,
+        auth_signature: authSignature,
+      });
 
-        // Confirm state eventually flips back to non-graduated.
-        for (let attempt = 0; attempt < 6; attempt++) {
-          const refreshed = await findMarketByOwner(ownerAddress);
-          if (refreshed && !refreshed.graduated) {
-            setMarketGraduated(false);
-            return;
-          }
-          await delay(600);
-        }
-      };
-
-      let registerSucceeded = false;
-      let shouldRollbackOnFailure = market.graduated && !alreadyLaunched;
-
-      try {
-        // 1) Ask backend to generate + compile creator token package template.
-        const normalizedOwnerAddress = normalizeOwnerAddressForBuildAuth(ownerAddress);
-        const normalizedTokenName = config.tokenName.trim();
-        const normalizedTokenSymbol = config.tokenSymbol.trim().toUpperCase();
-        const authTimestampMs = Date.now();
-        const authNonce = generateBuildAuthNonce();
-        const authMessage = buildCreatorTokenAuthMessage(
-          normalizedOwnerAddress,
-          normalizedTokenName,
-          normalizedTokenSymbol,
-          authTimestampMs,
-          authNonce,
-        );
-        const authSignature = await signAuthMessage(authMessage);
-
-        const buildResponse = await apiService.buildCreatorTokenPackage({
-          owner_address: normalizedOwnerAddress,
-          token_name: normalizedTokenName,
-          token_symbol: normalizedTokenSymbol,
-          auth_nonce: authNonce,
-          auth_timestamp_ms: authTimestampMs,
-          auth_signature: authSignature,
-        });
-        if (!buildResponse.success || !buildResponse.data) {
-          throw new Error(buildResponse.error || 'Failed to build creator token package');
-        }
-        const buildData = buildResponse.data;
-        const normalizedSymbol = buildData.token_symbol.toUpperCase();
-
-        // 2) Publish creator token package.
-        const publishTx = new Transaction();
-        const publishResultValue = publishTx.publish({
-          modules: buildData.modules,
-          dependencies: buildData.dependencies,
-        });
-        publishTx.transferObjects([publishResultValue], publishTx.pure.address(account.address));
-
-        const publishResult = await executeTransaction(publishTx);
-        const publishStatus = await resolveTxStatus(publishResult);
-        if (publishStatus.status && publishStatus.status !== 'success') {
-          throw new Error(publishStatus.error || 'Creator token package publish failed');
-        }
-
-        const publishBlock = await getTxBlockWithObjectChanges(publishStatus.digest);
-        const objectChanges = (publishBlock?.objectChanges ?? []) as Array<any>;
-        const published = objectChanges.find((change) => change.type === 'published' && typeof change.packageId === 'string');
-        if (!published?.packageId) {
-          throw new Error('Published package ID not found in publish transaction');
-        }
-        const creatorPackageId = normalizeAddress(published.packageId);
-        const tokenType = `${creatorPackageId}::${buildData.module_name}::${buildData.type_name}`;
-
-        // TreasuryCap<tokenType> should be created by module init and owned by publisher.
-        let treasuryCapId: string | undefined = objectChanges
-          .find(
-            (change) =>
-              change.type === 'created' &&
-              typeof change.objectType === 'string' &&
-              change.objectType === `0x2::coin::TreasuryCap<${tokenType}>` &&
-              typeof change.objectId === 'string',
-          )
-          ?.objectId;
-
-        if (!treasuryCapId) {
-          const ownedCaps = await client.getOwnedObjects({
-            owner: account.address,
-            filter: {
-              StructType: `0x2::coin::TreasuryCap<${tokenType}>`,
-            },
-            options: {
-              showType: true,
-            },
-          });
-          treasuryCapId = ownedCaps.data[0]?.data?.objectId;
-        }
-
-        if (!treasuryCapId) {
-          throw new Error(`TreasuryCap for ${tokenType} not found after publish`);
-        }
-
-        // 3) Finalize market graduation on-chain if this is a fresh launch.
-        if (!market.graduated) {
-          const graduateTx = new Transaction();
-          graduateTx.moveCall({
-            target: `${packageId}::graduation::graduate`,
-            arguments: [graduateTx.object(graduationRegistryId), graduateTx.object(market.objectId)],
-          });
-          const graduateResult = await executeTransaction(graduateTx);
-          const graduateStatus = await resolveTxStatus(graduateResult);
-
-          let graduationSucceeded = graduateStatus.status === 'success';
-          if (!graduationSucceeded) {
-            for (let attempt = 0; attempt < 6; attempt++) {
-              const refreshed = await findMarketByOwner(ownerAddress);
-              if (refreshed?.graduated) {
-                graduationSucceeded = true;
-                break;
-              }
-              await delay(600);
-            }
-          }
-          if (!graduationSucceeded) {
-            throw new Error(graduateStatus.error || 'On-chain launch transaction failed');
-          }
-          shouldRollbackOnFailure = true;
-        }
-
-        // 4) Register TreasuryCap<T> in shared graduation registry.
-        const registerTx = new Transaction();
-        const encoder = new TextEncoder();
-        registerTx.moveCall({
-          target: `${packageId}::graduation::register_creator_token`,
-          typeArguments: [tokenType],
-          arguments: [
-            registerTx.object(graduationRegistryId),
-            registerTx.object(market.objectId),
-            registerTx.object(treasuryCapId),
-            registerTx.pure.vector('u8', Array.from(encoder.encode(normalizedSymbol))),
-            registerTx.pure.vector('u8', Array.from(encoder.encode(buildData.token_name))),
-          ],
-        });
-
-        const registerResult = await executeTransaction(registerTx);
-        const registerStatus = await resolveTxStatus(registerResult);
-        if (registerStatus.status && registerStatus.status !== 'success') {
-          throw new Error(registerStatus.error || 'TreasuryCap registration failed');
-        }
-        registerSucceeded = true;
-
-        const registerBlock = await getTxBlockWithObjectChanges(registerStatus.digest);
-        const registerChanges = (registerBlock?.objectChanges ?? []) as Array<any>;
-        const vaultId: string | undefined = registerChanges
-          .find(
-            (change) =>
-              change.type === 'created' &&
-              typeof change.objectType === 'string' &&
-              change.objectType.includes('::graduation::CreatorTokenVault<') &&
-              typeof change.objectId === 'string',
-          )
-          ?.objectId;
-
-        const treasury = calculateTreasury(Math.max(1, market.holders));
-        const data: StoredGraduation = {
-          tokenName: buildData.token_name,
-          tokenSymbol: normalizedSymbol,
-          tokenPackageId: creatorPackageId,
-          tokenType,
-          tokenVaultId: vaultId,
-          graduatedAt: Date.now(),
-          treasuryBalanceMist: treasury.toString(),
-        };
-
-        saveGraduation(ownerAddress, data);
-        setStored(data);
-        setHoldersCount(market.holders);
-        setMarketFound(true);
-        setMarketGraduated(true);
-      } catch (error: any) {
-        const baseMessage = error?.message || 'Token launch failed';
-        if (!registerSucceeded && shouldRollbackOnFailure) {
-          let rollbackSucceeded = false;
-          try {
-            await rollbackGraduationIfNeeded();
-            rollbackSucceeded = true;
-          } catch (rollbackError: any) {
-            const rollbackMessage = rollbackError?.message || 'unknown rollback error';
-            throw new Error(`${baseMessage}. Rollback failed: ${rollbackMessage}`);
-          }
-          if (rollbackSucceeded) {
-            throw new Error(`${baseMessage}. Graduation was rolled back; you can retry launch.`);
-          }
-        }
-        throw new Error(baseMessage);
+      if (!response.success || !response.data) {
+        throw new Error(response.error || 'Failed to queue graduation launch');
       }
+
+      setLaunchStatus(response.data);
+      setMarketFound(true);
+      setHoldersCount(market.holders);
     },
-    [
-      ownerAddress,
-      account?.address,
-      packageId,
-      graduationRegistryId,
-      findMarketByOwner,
-      executeTransaction,
-      signAuthMessage,
-      resolveTxStatus,
-      getTxBlockWithObjectChanges,
-      client,
-      stored?.tokenPackageId,
-      stored?.tokenType,
-    ],
+    [account?.address, currentNetwork, findMarketByOwner, ownerAddress, signAuthMessage],
   );
 
-  return { graduationState, isLoading, triggerGraduation };
+  return {
+    graduationState,
+    isLoading,
+    triggerGraduation,
+    refreshLaunchStatus,
+  };
 }

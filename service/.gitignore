@@ -6,8 +6,11 @@ Cargo.lock
 # Environment variables
 .env
 
-# Database files
+# Database files (SQLite — project now uses PostgreSQL)
+db/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 

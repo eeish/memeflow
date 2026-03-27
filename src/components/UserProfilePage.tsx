@@ -13,6 +13,7 @@ import { GRADUATION_THRESHOLD, MAX_SUPPLY, graduationProgressPercent } from '../
 import { useAuth } from './AuthProvider';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useSharePurchaseFeedback } from '../contexts/SharePurchaseFeedbackContext';
 import { BuyShareDialog } from './BuyShareDialog';
 import type { TradePageContext } from '../types/trade';
 
@@ -34,7 +35,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
   // Follow/Buy Share state
   const { user: currentUser } = useAuth();
   const currentAccount = useCurrentAccount();
-  const { success: showSuccess, error: showError } = useNotifications();
+  const { error: showError } = useNotifications();
+  const { showSuccessReceipt } = useSharePurchaseFeedback();
   const { findMarketByOwner, buyShare, checkHolderStatus, loading: shareLoading } = useShareMarket();
 
   const [isFollowing, setIsFollowing] = useState(false);
@@ -45,8 +47,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
   const [buyDialogOpen, setBuyDialogOpen] = useState(false);
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
-  const [purchaseSuccessful, setPurchaseSuccessful] = useState(false);
-  const [purchaseTxDigest, setPurchaseTxDigest] = useState<string | undefined>(undefined);
   const [marketInfo, setMarketInfo] = useState<{ objectId: string; holders: number; graduated: boolean; packageId: string } | null>(null);
   const [isHolder, setIsHolder] = useState(false);
 
@@ -88,7 +88,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
       poolId: graduationState?.poolId,
       source: 'profile',
     });
-  }, [onOpenTrade, canTradeToken, activeTokenSymbol, user.username, graduationState?.tokenType, graduationState?.poolId]);
+  }, [onOpenTrade, canTradeToken, activeTokenSymbol, user.username, fullProfile?.wallet_address, graduationState?.tokenType, graduationState?.poolId]);
 
   // Fetch market info and holder status when we have the wallet address
   useEffect(() => {
@@ -222,31 +222,35 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
       const result = await buyShare(marketInfo.objectId, holdersCount, marketInfo.packageId);
 
       if (result.success) {
-        setPurchaseSuccessful(true);
-        setPurchaseTxDigest(result.txDigest);
         setIsHolder(true);
-        // Update local holder count
         const newHolders = holdersCount + 1;
         setMarketInfo(prev => prev ? { ...prev, holders: prev.holders + 1 } : null);
-        if (newHolders >= GRADUATION_THRESHOLD && holdersCount < GRADUATION_THRESHOLD) {
-          showSuccess(`@${user.username} just hit the graduation threshold! Token launch is now available.`);
-        } else {
-          showSuccess(`Successfully purchased a share of @${user.username}!`);
-        }
+        showSuccessReceipt({
+          targetUsername: user.username,
+          targetAvatarUrl: fullProfile?.avatar_url,
+          paidPriceSui: formatMistToSui(calculatePriceMist(holdersCount + 1)),
+          txDigest: result.txDigest,
+          holdersAfterPurchase: newHolders,
+          hitGraduationThreshold: newHolders >= GRADUATION_THRESHOLD && holdersCount < GRADUATION_THRESHOLD,
+          source: 'user-profile',
+        });
+        requestAnimationFrame(() => {
+          setBuyDialogOpen(false);
+        });
       } else {
         const errorMsg = result.error || 'Transaction failed';
         setPurchaseError(errorMsg);
         showError(errorMsg);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Purchase failed:', err);
-      const errorMsg = err.message || 'Failed to purchase share';
+      const errorMsg = err instanceof Error ? err.message : 'Failed to purchase share';
       setPurchaseError(errorMsg);
       showError(errorMsg);
     } finally {
       setIsPurchasing(false);
     }
-  }, [marketInfo, isPurchasing, buyShare, holdersCount, user.username, showSuccess, showError]);
+  }, [marketInfo, isPurchasing, buyShare, holdersCount, user.username, fullProfile?.avatar_url, showError, showSuccessReceipt]);
 
   // Fetch full profile data
   useEffect(() => {
@@ -494,8 +498,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
         onOpenChange={(open) => {
           setBuyDialogOpen(open);
           if (!open) {
-            setPurchaseSuccessful(false);
-            setPurchaseTxDigest(undefined);
+            setPurchaseError(null);
           }
         }}
         targetUsername={user.username}
@@ -505,8 +508,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
         isPurchasing={isPurchasing}
         error={purchaseError}
         graduationState={graduationState ?? undefined}
-        purchaseSuccess={purchaseSuccessful}
-        txDigest={purchaseTxDigest}
       />
     </div>
   );

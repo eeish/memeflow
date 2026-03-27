@@ -16,7 +16,7 @@ pub struct BuildCreatorTokenRequest {
     pub auth_signature: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BuildCreatorTokenResponse {
     pub package_name: String,
     pub module_name: String,
@@ -225,87 +225,25 @@ creator_token = "0x0"
     Ok(())
 }
 
-fn write_sui_client_config(config_path: &Path) -> Result<(), String> {
-    const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
-    let config = format!(
-        r#"---
-keystore:
-  File: /tmp/codex-empty.keystore
-external_keys: ~
-envs:
-  - alias: local
-    rpc: "http://127.0.0.1:9000"
-    ws: ~
-    basic_auth: ~
-  - alias: testnet
-    rpc: "https://fullnode.testnet.sui.io:443"
-    ws: ~
-    basic_auth: ~
-  - alias: mainnet
-    rpc: "https://fullnode.mainnet.sui.io:443"
-    ws: ~
-    basic_auth: ~
-active_env: local
-active_address: "{ZERO_ADDRESS}"
-"#
-    );
-    fs::write(config_path, config).map_err(|e| format!("Write Sui client config failed: {e}"))
-}
 
 fn run_sui_move_build(
     package_path: &Path,
-    client_config_path: &Path,
 ) -> Result<std::process::Output, String> {
-    let preferred_env = std::env::var("CREATOR_TOKEN_BUILD_ENV")
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "testnet".to_string());
-
-    let mut env_candidates = vec![preferred_env];
-    if !env_candidates.iter().any(|env| env == "testnet") {
-        env_candidates.push("testnet".to_string());
-    }
-    if !env_candidates.iter().any(|env| env == "mainnet") {
-        env_candidates.push("mainnet".to_string());
-    }
-
-    let mut last_output: Option<std::process::Output> = None;
-    for build_env in env_candidates {
-        let output = Command::new("sui")
-            .args([
-                "move",
-                "--client.config",
-                client_config_path
-                    .to_str()
-                    .ok_or_else(|| "Client config path is not valid UTF-8".to_string())?,
-                "--client.env",
-                "local",
-                "build",
-                "--path",
-                package_path
-                    .to_str()
-                    .ok_or_else(|| "Temp path is not valid UTF-8".to_string())?,
-                "--dump-bytecode-as-base64",
-                "--json-errors",
-                "--no-tree-shaking",
-                "--silence-warnings",
-                "--environment",
-                &build_env,
-            ])
-            .output()
-            .map_err(|e| format!("Failed to run `sui move build`: {e}"))?;
-
-        if output.status.success() {
-            return Ok(output);
-        }
-        last_output = Some(output);
-    }
-
-    match last_output {
-        Some(output) => Ok(output),
-        None => Err("Move build did not execute".to_string()),
-    }
+    Command::new("sui")
+        .args([
+            "move",
+            "build",
+            "--path",
+            package_path
+                .to_str()
+                .ok_or_else(|| "Temp path is not valid UTF-8".to_string())?,
+            "--dump-bytecode-as-base64",
+            "--json-errors",
+            "--no-tree-shaking",
+            "--silence-warnings",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run `sui move build`: {e}"))
 }
 
 fn extract_environment_hint(build_output: &str) -> Option<(String, String)> {
@@ -463,10 +401,7 @@ pub fn build_creator_token_package(
         &token_name,
         &owner_address,
     )?;
-    let client_config_path = temp_dir.path().join("sui-client.yaml");
-    write_sui_client_config(&client_config_path)?;
-
-    let mut output = run_sui_move_build(temp_dir.path(), &client_config_path)?;
+    let mut output = run_sui_move_build(temp_dir.path())?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

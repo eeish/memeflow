@@ -1,5 +1,6 @@
 use crate::{
     creator_token_builder::{self, BuildCreatorTokenRequest},
+    graduation_operator::OperatorLaunchInput,
     models::*,
     profile_validation, username_validation, AppState,
 };
@@ -96,6 +97,25 @@ fn extract_client_ip(headers: &HeaderMap) -> String {
         return ip.to_string();
     }
     "unknown".to_string()
+}
+
+fn normalize_object_id(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let normalized = if trimmed.starts_with("0x") {
+        trimmed.to_string()
+    } else {
+        format!("0x{}", trimmed)
+    };
+
+    if normalized.len() < 4 || normalized.len() > 66 {
+        return None;
+    }
+
+    if normalized[2..].chars().all(|ch| ch.is_ascii_hexdigit()) {
+        Some(normalized.to_lowercase())
+    } else {
+        None
+    }
 }
 
 fn prune_window(entries: &mut VecDeque<i64>, cutoff_ms: i64) {
@@ -211,6 +231,20 @@ fn enforce_build_request_security(
     )?;
 
     Ok(())
+}
+
+fn build_graduation_launch_auth_message(
+    owner_address: &str,
+    market_id: &str,
+    token_name: &str,
+    token_symbol: &str,
+    network: &str,
+    auth_timestamp_ms: i64,
+    auth_nonce: &str,
+) -> String {
+    format!(
+        "Cord Graduation Launch Authorization\n\nOwner: {owner_address}\nMarket ID: {market_id}\nToken Name: {token_name}\nToken Symbol: {token_symbol}\nNetwork: {network}\nTimestamp: {auth_timestamp_ms}\nNonce: {auth_nonce}\n\nSign this message to authorize Cord to publish the creator token, graduate the market, initialize the Phase 2 AMM pool, and seed the launch liquidity using the Cord operator wallet."
+    )
 }
 
 pub async fn build_creator_token_package_handler(
@@ -344,6 +378,393 @@ pub async fn build_creator_token_package_handler(
             (StatusCode::BAD_REQUEST, Json(ApiResponse::error(error)))
         }
     }
+}
+
+pub async fn get_graduation_launch_status(
+    State(app_state): State<AppState>,
+    Path(owner_address): Path<String>,
+) -> impl IntoResponse {
+    let normalized_owner =
+        match creator_token_builder::normalize_owner_address(owner_address.trim()) {
+            Some(value) => value,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<GraduationLaunchStatus>::error(
+                        "Invalid owner_address".to_string(),
+                    )),
+                )
+            }
+        };
+
+    match app_state
+        .db
+        .get_graduation_launch_status(&normalized_owner)
+        .await
+    {
+        Ok(Some(status)) => (StatusCode::OK, Json(ApiResponse::success(status))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<GraduationLaunchStatus>::error(
+                "Graduation launch status not found".to_string(),
+            )),
+        ),
+        Err(error) => {
+            tracing::error!("Failed to get graduation launch status: {}", error);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<GraduationLaunchStatus>::error(
+                    "Failed to load graduation launch status".to_string(),
+                )),
+            )
+        }
+    }
+}
+
+pub async fn request_graduation_launch(
+    State(app_state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<GraduationLaunchRequest>,
+) -> impl IntoResponse {
+    let operator = match &app_state.graduation_operator {
+        Some(operator) => operator.clone(),
+        None => {
+            let detail = app_state
+                .graduation_operator_error
+                .clone()
+                .unwrap_or_else(|| "Graduation operator is not configured".to_string());
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiResponse::<GraduationLaunchStatus>::error(detail)),
+            );
+        }
+    };
+
+    let owner_address =
+        match creator_token_builder::normalize_owner_address(&request.owner_address) {
+            Some(value) => value,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<GraduationLaunchStatus>::error(
+                        "Invalid owner_address".to_string(),
+                    )),
+                )
+            }
+        };
+    let market_id = match normalize_object_id(&request.market_id) {
+        Some(value) => value,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::<GraduationLaunchStatus>::error(
+                    "Invalid market_id".to_string(),
+                )),
+            )
+        }
+    };
+    let token_name = match creator_token_builder::normalize_token_name(&request.token_name) {
+        Some(value) => value,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::<GraduationLaunchStatus>::error(
+                    "Invalid token_name".to_string(),
+                )),
+            )
+        }
+    };
+    let token_symbol = match creator_token_builder::normalize_token_symbol(&request.token_symbol) {
+        Some(value) => value,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::<GraduationLaunchStatus>::error(
+                    "Invalid token_symbol".to_string(),
+                )),
+            )
+        }
+    };
+
+    if let Err(error) = enforce_build_request_security(
+        &owner_address,
+        request.auth_nonce.trim(),
+        request.auth_timestamp_ms,
+        &headers,
+    ) {
+        let status = if error.contains("rate limit") {
+            StatusCode::TOO_MANY_REQUESTS
+        } else if error.contains("API key") {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::FORBIDDEN
+        };
+        return (
+            status,
+            Json(ApiResponse::<GraduationLaunchStatus>::error(error)),
+        );
+    }
+
+    let expected_auth_message = build_graduation_launch_auth_message(
+        &owner_address,
+        &market_id,
+        &token_name,
+        &token_symbol,
+        &operator.network,
+        request.auth_timestamp_ms,
+        request.auth_nonce.trim(),
+    );
+    if let Err(error) = creator_token_builder::verify_creator_token_auth_signature(
+        &owner_address,
+        &expected_auth_message,
+        &request.auth_signature,
+    ) {
+        tracing::warn!(
+            owner_address,
+            "Graduation launch signature rejected: {}",
+            error
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse::<GraduationLaunchStatus>::error(
+                "Invalid graduation authorization signature".to_string(),
+            )),
+        );
+    }
+
+    let owner_exists = app_state
+        .db
+        .get_user_by_address(&owner_address)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+        || app_state
+            .db
+            .get_user_by_address(request.owner_address.trim())
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+
+    if !owner_exists {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ApiResponse::<GraduationLaunchStatus>::error(
+                "Owner address is not registered".to_string(),
+            )),
+        );
+    }
+
+    let existing = match app_state
+        .db
+        .get_graduation_launch_status(&owner_address)
+        .await
+    {
+        Ok(status) => status,
+        Err(error) => {
+            tracing::error!("Failed to query graduation launch status: {}", error);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<GraduationLaunchStatus>::error(
+                    "Failed to query graduation launch state".to_string(),
+                )),
+            );
+        }
+    };
+
+    if let Some(status) = existing.clone() {
+        let completed_with_pool = status.status == "completed" && status.pool_id.is_some();
+        if status.status == "queued" || status.status == "running" || completed_with_pool {
+            return (StatusCode::OK, Json(ApiResponse::success(status)));
+        }
+    }
+
+    let queued = match app_state
+        .db
+        .upsert_graduation_launch_status(UpsertGraduationLaunchStatus {
+            owner_address: owner_address.clone(),
+            market_id: market_id.clone(),
+            token_name: token_name.clone(),
+            token_symbol: token_symbol.clone(),
+            status: "queued".to_string(),
+            step: "queued".to_string(),
+            error: None,
+            package_id: existing.as_ref().and_then(|status| status.package_id.clone()),
+            token_type: existing.as_ref().and_then(|status| status.token_type.clone()),
+            vault_id: existing.as_ref().and_then(|status| status.vault_id.clone()),
+            pool_id: existing.as_ref().and_then(|status| status.pool_id.clone()),
+            operator_address: operator.operator_address.clone(),
+        })
+        .await
+    {
+        Ok(status) => status,
+        Err(error) => {
+            tracing::error!("Failed to persist queued graduation launch: {}", error);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<GraduationLaunchStatus>::error(
+                    "Failed to queue graduation launch".to_string(),
+                )),
+            );
+        }
+    };
+
+    let app_state_clone = app_state.clone();
+    tokio::spawn(async move {
+        let existing_status = app_state_clone
+            .db
+            .get_graduation_launch_status(&owner_address)
+            .await
+            .ok()
+            .flatten();
+
+        let needs_build = existing_status
+            .as_ref()
+            .map(|status| status.package_id.is_none() || status.token_type.is_none())
+            .unwrap_or(true);
+
+        let build_response = if needs_build {
+            let _ = app_state_clone
+                .db
+                .upsert_graduation_launch_status(UpsertGraduationLaunchStatus {
+                    owner_address: owner_address.clone(),
+                    market_id: market_id.clone(),
+                    token_name: token_name.clone(),
+                    token_symbol: token_symbol.clone(),
+                    status: "running".to_string(),
+                    step: "building_package".to_string(),
+                    error: None,
+                    package_id: existing_status.as_ref().and_then(|status| status.package_id.clone()),
+                    token_type: existing_status.as_ref().and_then(|status| status.token_type.clone()),
+                    vault_id: existing_status.as_ref().and_then(|status| status.vault_id.clone()),
+                    pool_id: existing_status.as_ref().and_then(|status| status.pool_id.clone()),
+                    operator_address: operator.operator_address.clone(),
+                })
+                .await;
+
+            match creator_token_builder::build_creator_token_package(BuildCreatorTokenRequest {
+                owner_address: owner_address.clone(),
+                token_name: token_name.clone(),
+                token_symbol: token_symbol.clone(),
+                auth_nonce: request.auth_nonce.clone(),
+                auth_timestamp_ms: request.auth_timestamp_ms,
+                auth_signature: request.auth_signature.clone(),
+            }) {
+                Ok(build) => Some(build),
+                Err(error) => {
+                    let _ = app_state_clone
+                        .db
+                        .upsert_graduation_launch_status(UpsertGraduationLaunchStatus {
+                            owner_address: owner_address.clone(),
+                            market_id: market_id.clone(),
+                            token_name: token_name.clone(),
+                            token_symbol: token_symbol.clone(),
+                            status: "failed".to_string(),
+                            step: "building_package".to_string(),
+                            error: Some(error.clone()),
+                            package_id: existing_status.as_ref().and_then(|status| status.package_id.clone()),
+                            token_type: existing_status.as_ref().and_then(|status| status.token_type.clone()),
+                            vault_id: existing_status.as_ref().and_then(|status| status.vault_id.clone()),
+                            pool_id: existing_status.as_ref().and_then(|status| status.pool_id.clone()),
+                            operator_address: operator.operator_address.clone(),
+                        })
+                        .await;
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        let _ = app_state_clone
+            .db
+            .upsert_graduation_launch_status(UpsertGraduationLaunchStatus {
+                owner_address: owner_address.clone(),
+                market_id: market_id.clone(),
+                token_name: token_name.clone(),
+                token_symbol: token_symbol.clone(),
+                status: "running".to_string(),
+                step: "initializing_amm".to_string(),
+                error: None,
+                package_id: existing_status.as_ref().and_then(|status| status.package_id.clone()),
+                token_type: existing_status.as_ref().and_then(|status| status.token_type.clone()),
+                vault_id: existing_status.as_ref().and_then(|status| status.vault_id.clone()),
+                pool_id: existing_status.as_ref().and_then(|status| status.pool_id.clone()),
+                operator_address: operator.operator_address.clone(),
+            })
+            .await;
+
+        match operator
+            .launch(OperatorLaunchInput {
+                owner_address: owner_address.clone(),
+                market_id: market_id.clone(),
+                token_name: token_name.clone(),
+                token_symbol: token_symbol.clone(),
+                package_build: build_response,
+                existing_package_id: existing_status.as_ref().and_then(|status| status.package_id.clone()),
+                existing_token_type: existing_status.as_ref().and_then(|status| status.token_type.clone()),
+                existing_vault_id: existing_status.as_ref().and_then(|status| status.vault_id.clone()),
+                existing_pool_id: existing_status.as_ref().and_then(|status| status.pool_id.clone()),
+            })
+            .await
+        {
+            Ok(result) => {
+                tracing::info!(
+                    owner = %owner_address,
+                    market = %market_id,
+                    package_id = ?result.package_id,
+                    pool_id = ?result.pool_id,
+                    tx_count = result.tx_digests.len(),
+                    "Graduation operator completed"
+                );
+                let _ = app_state_clone
+                    .db
+                    .upsert_graduation_launch_status(UpsertGraduationLaunchStatus {
+                        owner_address,
+                        market_id,
+                        token_name,
+                        token_symbol,
+                        status: "completed".to_string(),
+                        step: "completed".to_string(),
+                        error: None,
+                        package_id: result.package_id,
+                        token_type: result.token_type,
+                        vault_id: result.vault_id,
+                        pool_id: result.pool_id,
+                        operator_address: operator.operator_address.clone(),
+                    })
+                    .await;
+            }
+            Err(error) => {
+                tracing::error!(
+                    owner = %owner_address,
+                    market = %market_id,
+                    "Graduation operator failed: {}",
+                    error
+                );
+                let _ = app_state_clone
+                    .db
+                    .upsert_graduation_launch_status(UpsertGraduationLaunchStatus {
+                        owner_address,
+                        market_id,
+                        token_name,
+                        token_symbol,
+                        status: "failed".to_string(),
+                        step: "initializing_amm".to_string(),
+                        error: Some(error.to_string()),
+                        package_id: existing_status.as_ref().and_then(|status| status.package_id.clone()),
+                        token_type: existing_status.as_ref().and_then(|status| status.token_type.clone()),
+                        vault_id: existing_status.as_ref().and_then(|status| status.vault_id.clone()),
+                        pool_id: existing_status.as_ref().and_then(|status| status.pool_id.clone()),
+                        operator_address: operator.operator_address.clone(),
+                    })
+                    .await;
+            }
+        }
+    });
+
+    (StatusCode::ACCEPTED, Json(ApiResponse::success(queued)))
 }
 
 // Notifications: create and deliver
@@ -1361,12 +1782,16 @@ mod tests {
     use tokio::sync::Notify;
 
     async fn test_state() -> AppState {
-        let db = Database::with_url("sqlite::memory:").await.expect("db");
+        let db_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://cord:cord@localhost:5432/cord".to_string());
+        let db = Database::with_url(&db_url).await.expect("db");
         AppState {
             db: std::sync::Arc::new(db),
             sui_verification: std::sync::Arc::new(SuiVerification::new()),
             r2_client: None,
             r2_error: None,
+            graduation_operator: None,
+            graduation_operator_error: None,
             notification_sessions: std::sync::Arc::new(DashMap::new()),
             notification_notify: std::sync::Arc::new(Notify::new()),
         }
@@ -2117,4 +2542,57 @@ pub async fn batch_upload_media(
 
     tracing::info!("✅ Batch upload completed: {} files", results.len());
     Ok(Json(ApiResponse::success(results)))
+}
+
+// ============================================================================
+// AMM OHLCV endpoints
+// ============================================================================
+
+#[derive(Deserialize)]
+pub struct OhlcvQuery {
+    /// Interval name: 1m, 5m, 15m, 1h, 4h, 1d
+    pub interval: Option<String>,
+    pub limit: Option<i64>,
+}
+
+fn interval_to_ms(interval: &str) -> i64 {
+    match interval.to_lowercase().as_str() {
+        "1m"  => 60_000,
+        "5m"  => 300_000,
+        "15m" => 900_000,
+        "1h"  => 3_600_000,
+        "4h"  => 14_400_000,
+        "1d"  => 86_400_000,
+        _     => 300_000, // default 5m
+    }
+}
+
+pub async fn record_swap_event(
+    State(state): State<crate::AppState>,
+    Path(pool_id): Path<String>,
+    Json(mut req): Json<crate::models::RecordSwapRequest>,
+) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiResponse<String>>)> {
+    req.pool_id = pool_id;
+    state.db.record_swap_event(&req).await.map_err(|e| {
+        api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())
+    })?;
+    Ok(Json(ApiResponse::success("ok".to_string())))
+}
+
+pub async fn get_ohlcv(
+    State(state): State<crate::AppState>,
+    Path(pool_id): Path<String>,
+    Query(params): Query<OhlcvQuery>,
+) -> Result<Json<ApiResponse<Vec<crate::models::OhlcvCandle>>>, (StatusCode, Json<ApiResponse<Vec<crate::models::OhlcvCandle>>>)> {
+    let interval_ms = interval_to_ms(params.interval.as_deref().unwrap_or("5m"));
+    let limit = params.limit.unwrap_or(200).clamp(1, 1000);
+
+    let candles = state.db.get_ohlcv(&pool_id, interval_ms, limit).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::error(e.to_string())),
+        )
+    })?;
+
+    Ok(Json(ApiResponse::success(candles)))
 }

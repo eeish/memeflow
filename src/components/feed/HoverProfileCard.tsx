@@ -6,6 +6,7 @@ import { useGraduation } from '../../hooks/useGraduation';
 import { GRADUATION_THRESHOLD, MAX_SUPPLY, graduationProgressPercent } from '../../lib/graduation';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { useNotifications } from '../../contexts/NotificationContext';
+import { useSharePurchaseFeedback } from '../../contexts/SharePurchaseFeedbackContext';
 import { UserPlus, UserMinus, ShoppingCart, Loader2 } from '../ui-simple/Icons';
 import { BuyShareDialog } from '../BuyShareDialog';
 import type { FeedAuthor, FeedTone } from './types';
@@ -100,7 +101,8 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
 }) => {
   const account = useCurrentAccount();
   const { findMarketByOwner, buyShare, checkHolderStatus, loading: shareLoading } = useShareMarket();
-  const { success: showSuccess, error: showError } = useNotifications();
+  const { error: showError } = useNotifications();
+  const { showSuccessReceipt } = useSharePurchaseFeedback();
 
   const [profile, setProfile] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
@@ -118,8 +120,6 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
   const [buyDialogOpen, setBuyDialogOpen] = useState(false);
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
-  const [purchaseSuccessful, setPurchaseSuccessful] = useState(false);
-  const [purchaseTxDigest, setPurchaseTxDigest] = useState<string | undefined>(undefined);
   const [isHolder, setIsHolder] = useState(false);
 
   // Reset profile when author changes
@@ -327,32 +327,36 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
       const result = await buyShare(marketInfo.objectId, holdersCount, marketInfo.packageId);
 
       if (result.success) {
-        setPurchaseSuccessful(true);
-        setPurchaseTxDigest(result.txDigest);
-        setIsHolder(true);
-        // Update local holder count
         const newHolders = holdersCount + 1;
+        setIsHolder(true);
         setMarketInfo(prev => prev ? { ...prev, holders: prev.holders + 1 } : null);
         setIsFollowing(true);
-        if (newHolders >= GRADUATION_THRESHOLD && holdersCount < GRADUATION_THRESHOLD) {
-          showSuccess(`@${author.username} just hit the graduation threshold! Token launch is now available.`);
-        } else {
-          showSuccess(`Successfully purchased a share of @${author.username}!`);
-        }
+        showSuccessReceipt({
+          targetUsername: author.username,
+          targetAvatarUrl: avatarUrl,
+          paidPriceSui: formatMistToSui(calculatePriceMist(holdersCount + 1)),
+          txDigest: result.txDigest,
+          holdersAfterPurchase: newHolders,
+          hitGraduationThreshold: newHolders >= GRADUATION_THRESHOLD && holdersCount < GRADUATION_THRESHOLD,
+          source: 'hover-card',
+        });
+        requestAnimationFrame(() => {
+          setBuyDialogOpen(false);
+        });
       } else {
         const errorMsg = result.error || 'Transaction failed';
         setPurchaseError(errorMsg);
         showError(errorMsg);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to purchase share:', err);
-      const errorMessage = err.message || 'Failed to purchase share';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to purchase share';
       setPurchaseError(errorMessage);
       showError(errorMessage);
     } finally {
       setIsPurchasing(false);
     }
-  }, [marketInfo, isPurchasing, buyShare, holdersCount, author.username, showSuccess, showError]);
+  }, [marketInfo, isPurchasing, buyShare, holdersCount, author.username, avatarUrl, showError, showSuccessReceipt]);
 
   const handleOpenTrade = useCallback(
     (e: React.MouseEvent) => {
@@ -368,7 +372,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
         source: 'feed',
       });
     },
-    [activeTokenSymbol, author.username, onOpenTrade, graduationState?.tokenType, graduationState?.poolId]
+    [activeTokenSymbol, author.username, onOpenTrade, walletAddress, graduationState?.tokenType, graduationState?.poolId]
   );
 
   // Styling based on tone
@@ -598,8 +602,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
           onOpenChange={(open) => {
             setBuyDialogOpen(open);
             if (!open) {
-              setPurchaseSuccessful(false);
-              setPurchaseTxDigest(undefined);
+              setPurchaseError(null);
             }
           }}
           targetUsername={username || ''}
@@ -609,8 +612,6 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
           isPurchasing={isPurchasing}
           error={purchaseError}
           graduationState={graduationState ?? undefined}
-          purchaseSuccess={purchaseSuccessful}
-          txDigest={purchaseTxDigest}
         />
       )}
     </>,

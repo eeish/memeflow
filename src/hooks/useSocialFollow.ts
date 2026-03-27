@@ -403,6 +403,13 @@ export function useSocialFollow() {
   // Fetch user's profile data
   const fetchUserProfile = useCallback(async () => {
     if (!account) return;
+    if (
+      !ORIGINAL_PACKAGE_ID ||
+      ORIGINAL_PACKAGE_ID === '0x0' ||
+      ORIGINAL_PACKAGE_ID === '0x0000000000000000000000000000000000000000000000000000000000000000'
+    ) {
+      return;
+    }
 
     try {
       // Query user's FollowBook and Market objects
@@ -477,11 +484,11 @@ export function useSocialFollow() {
 
   // Initialize on mount
   useEffect(() => {
-    if (account) {
+    if (account && ORIGINAL_PACKAGE_ID) {
       fetchUserProfile();
       loadFollowingList();
     }
-  }, [account, fetchUserProfile, loadFollowingList]);
+  }, [account, ORIGINAL_PACKAGE_ID, fetchUserProfile, loadFollowingList]);
 
   return {
     // State

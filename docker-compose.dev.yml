@@ -1,7 +1,23 @@
 version: '3.8'
 
 services:
-  # Rust Backend Service
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cord
+      POSTGRES_PASSWORD: cord
+      POSTGRES_DB: cord
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cord -d cord"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   cord-service:
     build:
       context: ./service
@@ -9,40 +25,24 @@ services:
     ports:
       - "3001:3001"
     environment:
-      - DATABASE_URL=sqlite:./data/cord.db
+      - DATABASE_URL=postgres://cord:cord@postgres:5432/cord
       - HOST=0.0.0.0
       - PORT=3001
       - RUST_LOG=info
       - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
-    volumes:
-      - ./service/data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     restart: unless-stopped
 
-  # Frontend Development (optional - can run separately)
-  # Uncomment if you want frontend in Docker too
-  # cord-frontend:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.frontend
-  #   ports:
-  #     - "5173:5173"
-  #   volumes:
-  #     - .:/app
-  #     - /app/node_modules
-  #   environment:
-  #     - VITE_API_BASE_URL=http://localhost:3001
-  #   depends_on:
-  #     - cord-service
-  #   command: npm run dev -- --host 0.0.0.0
-
 volumes:
-  service_data:
+  postgres_data:
     driver: local
 
 networks:
