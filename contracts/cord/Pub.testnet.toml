@@ -7,9 +7,9 @@ chain-id = "4c78adac"
 
 [[published]]
 source = { local = "/home/leo/repo/psui/contract/contracts/cord" }
-published-at = "0xf552f121f910aff71562dcaa3d216ed2f498f9b2cb394c5b0f6e6af998be003c"
-original-id = "0xf552f121f910aff71562dcaa3d216ed2f498f9b2cb394c5b0f6e6af998be003c"
+published-at = "0xeeeb538921079d3650f9e6cc8a7c1abdcbd6b2ffc358cb1c4ef42705bb1f407b"
+original-id = "0xeeeb538921079d3650f9e6cc8a7c1abdcbd6b2ffc358cb1c4ef42705bb1f407b"
 version = 1
 toolchain-version = "1.68.0"
 build-config = { flavor = "sui", edition = "2024" }
-upgrade-capability = "0xb935f8b76d52f9cdaa06d740e19506019fa190552dc8b616d8531ae110c30cfe"
+upgrade-capability = "0x65460a7bb315a64799b6e58886c14da58e78208362493199bd932f28b1b125f1"

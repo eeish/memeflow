@@ -66,7 +66,10 @@ export function useDeploymentConfig() {
 export function useContractAddresses() {
   const { deployment } = useDeploymentConfig();
 
-  const packageId = deployment?.packageId || '';
+  const packageId =
+    import.meta.env.VITE_PACKAGE_ID || deployment?.packageId || '';
+  const graduationRegistryId =
+    import.meta.env.VITE_GRADUATION_REGISTRY_ID || deployment?.graduationRegistryId || '';
 
   return {
     /** Latest package ID - use for calling contract functions */
@@ -74,7 +77,7 @@ export function useContractAddresses() {
     /** Original package ID - use for querying existing objects (markets, profiles) */
     originalPackageId: deployment?.originalPackageId || packageId,
     /** Shared object for calling graduation::graduate */
-    graduationRegistryId: deployment?.graduationRegistryId || '',
+    graduationRegistryId,
     /** Max holders in Phase 1 */
     maxSupply: deployment?.maxSupply || 2,
     /** Holders threshold required before launch is allowed (same as maxSupply). */

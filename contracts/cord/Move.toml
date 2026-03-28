@@ -3,13 +3,13 @@ name = "cord"
 edition = "2024"
 license = "MIT"
 authors = ["Cord Team"]
-published-at = "0xf552f121f910aff71562dcaa3d216ed2f498f9b2cb394c5b0f6e6af998be003c"
+published-at = "0xeeeb538921079d3650f9e6cc8a7c1abdcbd6b2ffc358cb1c4ef42705bb1f407b"
 
 [dependencies]
 Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
 
 [addresses]
-cord = "0xf552f121f910aff71562dcaa3d216ed2f498f9b2cb394c5b0f6e6af998be003c"
+cord = "0xeeeb538921079d3650f9e6cc8a7c1abdcbd6b2ffc358cb1c4ef42705bb1f407b"
 
 [dev-dependencies]
 
