@@ -22,6 +22,7 @@ interface MarketObjectContent {
   fields?: {
     holders?: string | number;
     graduated?: boolean;
+    holder_list?: string[];
   };
 }
 
@@ -191,6 +192,15 @@ export function usePortfolio(): PortfolioData {
           });
 
           const content = marketObj.data?.content as MarketObjectContent | undefined;
+
+          // Authoritative on-chain check: user must appear in holder_list.
+          // This filters out stale event data (old test markets, sold positions
+          // where event replay diverged from chain state, cross-deployment noise).
+          const holderList = content?.fields?.holder_list ?? [];
+          if (!holderList.includes(userAddress)) {
+            continue;
+          }
+
           const holders = content?.fields?.holders ? Number(content.fields.holders) : 1;
           // Use on-chain graduated flag — localStorage is unreliable (not set on other devices)
           const isGraduated = !!content?.fields?.graduated;
