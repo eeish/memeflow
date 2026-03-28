@@ -54,24 +54,19 @@ export interface PortfolioData {
   refetch: () => void;
 }
 
-// Fetch all pages of events for a given query, filtered to transactions sent
-// by `sender`. Returns every event across all pages (no hard limit).
-async function fetchAllUserEvents(
+// Fetch all pages of events for a given MoveEventType, returning every event
+// across all pages. SuiEventFilter has no And combinator, so we filter
+// client-side by buyer/seller address after fetching.
+async function fetchAllEvents(
   client: ReturnType<typeof useSuiClient>,
   moveEventType: string,
-  sender: string,
 ): Promise<Array<{ parsedJson: unknown; timestampMs?: string | null }>> {
   const results: Array<{ parsedJson: unknown; timestampMs?: string | null }> = [];
   let cursor: { eventSeq: string; txDigest: string } | null = null;
 
   while (true) {
     const page = await client.queryEvents({
-      query: {
-        And: [
-          { MoveEventType: moveEventType },
-          { Sender: sender },
-        ],
-      },
+      query: { MoveEventType: moveEventType },
       order: 'ascending',
       limit: 50,
       cursor: cursor ?? undefined,
@@ -126,8 +121,8 @@ export function usePortfolio(): PortfolioData {
 
       for (const pkgId of packageIds) {
         const [purchaseEvents, soldEvents] = await Promise.all([
-          fetchAllUserEvents(client, `${pkgId}::share_market::SharePurchased`, userAddress),
-          fetchAllUserEvents(client, `${pkgId}::share_market::ShareSold`, userAddress),
+          fetchAllEvents(client, `${pkgId}::share_market::SharePurchased`),
+          fetchAllEvents(client, `${pkgId}::share_market::ShareSold`),
         ]);
 
         for (const event of purchaseEvents) {
