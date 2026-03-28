@@ -6,6 +6,7 @@ import { BannerNotification } from './BannerNotification';
 import { Settings } from '../ui-simple/Icons';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../AuthProvider';
+import { API_BASE_URL } from '../../lib/api';
 
 interface WsNotificationPayload {
   id: string;
@@ -33,8 +34,8 @@ export const NotificationContainer: React.FC = () => {
     const seenMessageIds = new Set<string>();
 
     const connect = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${protocol}://${window.location.hostname}:3001/ws/notifications/${user.id}`);
+      const wsBase = API_BASE_URL.replace(/^http/, 'ws').replace(/\/api$/, '');
+      ws = new WebSocket(`${wsBase}/ws/notifications/${user.id}`);
 
       ws.onmessage = (event) => {
         try {

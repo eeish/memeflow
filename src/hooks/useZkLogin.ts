@@ -10,6 +10,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { generateNonce, generateRandomness, getExtendedEphemeralPublicKey, jwtToAddress } from '@mysten/zklogin';
 import { decodeJwt } from 'jose';
 import { useSuiClient } from '@mysten/dapp-kit';
+import { API_BASE_URL } from '../lib/api';
 
 // zkLogin configuration
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
@@ -18,8 +19,8 @@ const REDIRECT_URI = typeof window !== 'undefined'
   : '';
 
 // Backend proxy endpoints (avoid browser CORS)
-const PROVER_URL = 'http://localhost:3001/api/zklogin/proof';
-const SALT_SERVICE_URL = 'http://localhost:3001/api/zklogin/salt';
+const PROVER_URL = `${API_BASE_URL}/zklogin/proof`;
+const SALT_SERVICE_URL = `${API_BASE_URL}/zklogin/salt`;
 
 // Storage keys
 const STORAGE_KEYS = {

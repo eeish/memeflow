@@ -6,6 +6,7 @@ import {
   useWallets,
   useSignPersonalMessage
 } from '@mysten/dapp-kit';
+import { API_BASE_URL } from '../lib/api';
 import { Button } from './ui-simple/Button';
 import { Card } from './ui-simple/Card';
 import { Alert, AlertDescription } from './ui-simple/Alert';
@@ -398,7 +399,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
   const authenticateExistingUser = async (walletAddress: string, authMethod: 'wallet' | 'zklogin' = 'wallet'): Promise<boolean> => {
     try {
-      const response = await fetch(`http://localhost:3001/api/users/by-address/${walletAddress}`);
+      const response = await fetch(`${API_BASE_URL}/users/by-address/${walletAddress}`);
       const data = await response.json();
       
       if (data.success && data.data) {
@@ -433,7 +434,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
   // API service functions
   const checkUserExists = async (walletAddress: string): Promise<boolean> => {
     try {
-      const response = await fetch(`http://localhost:3001/api/verify/user-exists/${walletAddress}`);
+      const response = await fetch(`${API_BASE_URL}/verify/user-exists/${walletAddress}`);
       const data = await response.json();
       return data.success && data.data === true;
     } catch (error) {
@@ -444,7 +445,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
   const verifyWalletAddress = async (walletAddress: string) => {
     try {
-      const response = await fetch(`http://localhost:3001/api/verify/address/${walletAddress}`);
+      const response = await fetch(`${API_BASE_URL}/verify/address/${walletAddress}`);
       const data = await response.json();
       return data.success ? data.data : null;
     } catch (error) {
@@ -462,7 +463,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     try {
       console.log('📝 Creating user with data:', userData);
       
-      const response = await fetch('http://localhost:3001/api/users', {
+      const response = await fetch(`${API_BASE_URL}/users`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -517,7 +518,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         // Try to get user from backend to restore full profile
         // Backend is required for proper user ID (UUID) - no fallback to wallet address
         try {
-          const response = await fetch(`http://localhost:3001/api/users/by-address/${walletAddress}`);
+          const response = await fetch(`${API_BASE_URL}/users/by-address/${walletAddress}`);
           const data = await response.json();
 
           if (data.success && data.data) {
@@ -893,7 +894,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
     try {
       console.log('🔄 [REFRESH_USER] Refreshing user data for:', user.wallet_address);
-      const response = await fetch(`http://localhost:3001/api/users/by-address/${user.wallet_address}`);
+      const response = await fetch(`${API_BASE_URL}/users/by-address/${user.wallet_address}`);
       const data = await response.json();
 
       if (data.success && data.data) {
