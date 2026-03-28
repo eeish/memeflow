@@ -2,6 +2,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_PACKAGE_ID: string
+  readonly VITE_ORIGINAL_PACKAGE_ID?: string
   readonly VITE_GRADUATION_REGISTRY_ID?: string
   readonly VITE_MAX_SUPPLY?: string
   readonly VITE_NETWORK: string

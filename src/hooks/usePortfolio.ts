@@ -54,10 +54,42 @@ export interface PortfolioData {
   refetch: () => void;
 }
 
+// Fetch all pages of events for a given query, filtered to transactions sent
+// by `sender`. Returns every event across all pages (no hard limit).
+async function fetchAllUserEvents(
+  client: ReturnType<typeof useSuiClient>,
+  moveEventType: string,
+  sender: string,
+): Promise<Array<{ parsedJson: unknown; timestampMs?: string | null }>> {
+  const results: Array<{ parsedJson: unknown; timestampMs?: string | null }> = [];
+  let cursor: { eventSeq: string; txDigest: string } | null = null;
+
+  while (true) {
+    const page = await client.queryEvents({
+      query: {
+        And: [
+          { MoveEventType: moveEventType },
+          { Sender: sender },
+        ],
+      },
+      order: 'ascending',
+      limit: 50,
+      cursor: cursor ?? undefined,
+    });
+
+    results.push(...page.data);
+
+    if (!page.hasNextPage || !page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+
+  return results;
+}
+
 export function usePortfolio(): PortfolioData {
   const account = useCurrentAccount();
   const client = useSuiClient();
-  const { originalPackageId, graduationRegistryId } = useContractAddresses();
+  const { packageId, originalPackageId, graduationRegistryId } = useContractAddresses();
 
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -78,55 +110,48 @@ export function usePortfolio(): PortfolioData {
       // Build a map of marketId -> { held: boolean, purchasePrice }
       const marketMap = new Map<string, { held: boolean; purchasePriceMist: bigint; creatorAddress: string }>();
 
-      // 1. Query SharePurchased events
-      const purchaseEvents = await client.queryEvents({
-        query: {
-          MoveEventType: `${originalPackageId}::share_market::SharePurchased`,
-        },
-        order: 'ascending',
-        limit: 50,
-      });
+      // Collect unique package IDs to query — originalPackageId covers the
+      // first deployment; packageId covers any upgraded deployment. Querying
+      // both ensures holdings from before a fresh deploy are still visible.
+      const packageIds = Array.from(new Set([originalPackageId, packageId].filter(Boolean)));
 
-      // 2. Query ShareSold events
-      const soldEvents = await client.queryEvents({
-        query: {
-          MoveEventType: `${originalPackageId}::share_market::ShareSold`,
-        },
-        order: 'ascending',
-        limit: 50,
-      });
-
-      // 3. Merge both streams and sort by on-chain timestamp so that a
-      //    sell-then-rebuy sequence is replayed in the correct order.
-      //    Processing purchases first then sells (two separate passes) loses
-      //    chronological order and causes rebuys to be masked by an earlier sell.
+      // 1 & 2. Fetch purchase and sell events for every relevant package ID.
+      //        Uses Sender filter + cursor pagination so we get every event
+      //        for this user without a hard 50-event cap.
       type MergedEvent =
         | { type: 'purchase'; marketId: string; priceMist: bigint; creatorAddress: string; ts: number }
         | { type: 'sell';     marketId: string; ts: number };
 
       const merged: MergedEvent[] = [];
 
-      for (const event of purchaseEvents.data) {
-        const parsed = event.parsedJson as ParsedSharePurchaseEvent | null;
-        if (parsed?.buyer === userAddress && parsed.market_id && parsed.price_mist && parsed.creator) {
-          merged.push({
-            type: 'purchase',
-            marketId: parsed.market_id,
-            priceMist: BigInt(parsed.price_mist),
-            creatorAddress: parsed.creator,
-            ts: Number(event.timestampMs ?? 0),
-          });
-        }
-      }
+      for (const pkgId of packageIds) {
+        const [purchaseEvents, soldEvents] = await Promise.all([
+          fetchAllUserEvents(client, `${pkgId}::share_market::SharePurchased`, userAddress),
+          fetchAllUserEvents(client, `${pkgId}::share_market::ShareSold`, userAddress),
+        ]);
 
-      for (const event of soldEvents.data) {
-        const parsed = event.parsedJson as ParsedShareSoldEvent | null;
-        if (parsed?.seller === userAddress && parsed.market_id) {
-          merged.push({
-            type: 'sell',
-            marketId: parsed.market_id,
-            ts: Number(event.timestampMs ?? 0),
-          });
+        for (const event of purchaseEvents) {
+          const parsed = event.parsedJson as ParsedSharePurchaseEvent | null;
+          if (parsed?.buyer === userAddress && parsed.market_id && parsed.price_mist && parsed.creator) {
+            merged.push({
+              type: 'purchase',
+              marketId: parsed.market_id,
+              priceMist: BigInt(parsed.price_mist),
+              creatorAddress: parsed.creator,
+              ts: Number(event.timestampMs ?? 0),
+            });
+          }
+        }
+
+        for (const event of soldEvents) {
+          const parsed = event.parsedJson as ParsedShareSoldEvent | null;
+          if (parsed?.seller === userAddress && parsed.market_id) {
+            merged.push({
+              type: 'sell',
+              marketId: parsed.market_id,
+              ts: Number(event.timestampMs ?? 0),
+            });
+          }
         }
       }
 
@@ -272,7 +297,7 @@ export function usePortfolio(): PortfolioData {
     } finally {
       setIsLoading(false);
     }
-  }, [account?.address, client, originalPackageId, graduationRegistryId]);
+  }, [account?.address, client, packageId, originalPackageId, graduationRegistryId]);
 
   useEffect(() => {
     fetchPortfolio();

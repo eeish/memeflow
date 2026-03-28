@@ -70,12 +70,16 @@ export function useContractAddresses() {
     import.meta.env.VITE_PACKAGE_ID || deployment?.packageId || '';
   const graduationRegistryId =
     import.meta.env.VITE_GRADUATION_REGISTRY_ID || deployment?.graduationRegistryId || '';
+  const originalPackageId =
+    import.meta.env.VITE_ORIGINAL_PACKAGE_ID ||
+    deployment?.originalPackageId ||
+    packageId;
 
   return {
     /** Latest package ID - use for calling contract functions */
     packageId,
     /** Original package ID - use for querying existing objects (markets, profiles) */
-    originalPackageId: deployment?.originalPackageId || packageId,
+    originalPackageId,
     /** Shared object for calling graduation::graduate */
     graduationRegistryId,
     /** Max holders in Phase 1 */
