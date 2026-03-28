@@ -1,0 +1,22 @@
+{
+  "network": "devnet",
+  "rpcUrl": "https://fullnode.devnet.sui.io:443",
+  "explorerUrl": "https://suiscan.xyz/devnet",
+  "maxSupply": 2,
+  "packageId": "0x85e060fb8b1e83065f6c95fa367f3a0a666987e5a6e70aecb1c05cd89671e11f",
+  "upgradeCapId": "0x1f0b37b7a828ee0274f62052a8ccb5c181b860e1064164f70523b974fb0bcf61",
+  "graduationRegistryId": "0x188b1e9884589e9f1984c95a4c41d68c3babf852548155d3973e0f7af26205a1",
+  "deploymentTx": "4MzrTYnRRTYaBLDf5G9KHrqP716SPdZj7q2jUhe3fDSW",
+  "gasUsed": {
+    "computationCost": "1000000",
+    "storageCost": "53709200",
+    "storageRebate": "978120",
+    "nonRefundableStorageFee": "9880"
+  },
+  "totalObjectsCreated": 3,
+  "sharedObjectsCreated": 1,
+  "timestamp": "2026-02-28T15:55:29.395144+00:00",
+  "deployer": "0xace72a80e389bea3668bbe54bd4677bdef5c4b88d34eb553b7331643ceada5c5",
+  "status": "deployed",
+  "isUpgrade": false
+}

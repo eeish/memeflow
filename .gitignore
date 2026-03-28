@@ -89,7 +89,8 @@ dist
 
 # Gatsby files
 .cache/
-public
+# Note: 'public' intentionally NOT ignored — this is a Vite project, not Gatsby.
+# Vite reads static assets FROM public/ and copies them to dist/ during build.
 
 # Storybook build outputs
 .out
@@ -136,7 +137,8 @@ contracts/*/build/
 contracts/*/Move.lock
 
 # Deployment and configuration
-deployment-*.json
+# Root-level deployment files (public/deployment-*.json are tracked so Railway has contract addresses)
+/deployment-*.json
 .sui/
 
 # Development tools

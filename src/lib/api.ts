@@ -277,8 +277,17 @@ class ApiService {
     });
   }
 
-  async getGraduationLaunchStatus(ownerAddress: string): Promise<ApiResponse<GraduationLaunchStatus>> {
-    return this.request<GraduationLaunchStatus>(`/graduation/status/${ownerAddress}`);
+  async getGraduationLaunchStatus(ownerAddress: string): Promise<ApiResponse<GraduationLaunchStatus> | null> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/graduation/status/${ownerAddress}`, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      return await response.json();
+    } catch {
+      return null;
+    }
   }
 
   async getUser(userId: string): Promise<ApiResponse<User>> {

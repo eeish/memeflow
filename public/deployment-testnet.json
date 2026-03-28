@@ -1,0 +1,22 @@
+{
+  "network": "testnet",
+  "rpcUrl": "https://fullnode.testnet.sui.io:443",
+  "explorerUrl": "https://suiscan.xyz/testnet",
+  "maxSupply": 2,
+  "packageId": "0xeeeb538921079d3650f9e6cc8a7c1abdcbd6b2ffc358cb1c4ef42705bb1f407b",
+  "upgradeCapId": "0x65460a7bb315a64799b6e58886c14da58e78208362493199bd932f28b1b125f1",
+  "graduationRegistryId": "0x10c23b341639271f8e75cc36ebd16a7a73b148cf977c8f0ac3dde55d524ea164",
+  "deploymentTx": "8Ctsd6Xt5kTTaJTvhNUPmXmcjnV5maZVy3S7KTQ6EsB4",
+  "gasUsed": {
+    "computationCost": "1000000",
+    "storageCost": "93008800",
+    "storageRebate": "978120",
+    "nonRefundableStorageFee": "9880"
+  },
+  "totalObjectsCreated": 3,
+  "sharedObjectsCreated": 1,
+  "timestamp": "2026-03-28T15:58:24.403969+00:00",
+  "deployer": "0xace72a80e389bea3668bbe54bd4677bdef5c4b88d34eb553b7331643ceada5c5",
+  "status": "deployed",
+  "isUpgrade": false
+}

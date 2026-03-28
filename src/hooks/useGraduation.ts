@@ -88,14 +88,10 @@ export function useGraduation(ownerAddress?: string | null) {
       return null;
     }
 
-    try {
-      const response = await apiService.getGraduationLaunchStatus(ownerAddress);
-      if (response.success && response.data) {
-        setLaunchStatus(response.data);
-        return response.data;
-      }
-    } catch {
-      // No launch job exists yet or backend is unavailable.
+    const response = await apiService.getGraduationLaunchStatus(ownerAddress);
+    if (response?.success && response.data) {
+      setLaunchStatus(response.data);
+      return response.data;
     }
 
     setLaunchStatus(null);
