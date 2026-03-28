@@ -117,9 +117,9 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       interval = setInterval(() => {
         const currentWalletAddress = currentWallet?.accounts?.[0]?.address;
 
-        // Skip verification if wallet is reconnecting (prevents false positives)
-        if (connectionStatus === 'connecting') {
-          console.log('⏸️ [PERIODIC_VERIFY] Wallet reconnecting - skipping verification');
+        // Skip verification until wallet connection is fully established
+        if (connectionStatus !== 'connected') {
+          console.log('⏸️ [PERIODIC_VERIFY] Wallet not yet connected - skipping verification');
           return;
         }
 
@@ -212,10 +212,12 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       console.log('🔐 [STRICT_AUTH] Authenticated user wallet:', user?.wallet_address);
       console.log('🔐 [STRICT_AUTH] Connection status:', connectionStatus);
 
-      // CRITICAL: Wait for wallet to finish reconnecting before enforcing security checks
-      // This prevents false logouts on page refresh when wallet is still connecting
-      if (connectionStatus === 'connecting') {
-        console.log('⏸️ [STRICT_AUTH] Wallet is reconnecting - skipping security checks');
+      // CRITICAL: Only enforce security checks once wallet connection is fully established.
+      // On page refresh, connectionStatus starts as 'disconnected' before becoming
+      // 'connecting' then 'connected' — skipping on anything other than 'connected'
+      // prevents false logouts during that transient window.
+      if (connectionStatus !== 'connected') {
+        console.log('⏸️ [STRICT_AUTH] Wallet not yet connected - skipping security checks');
         return;
       }
 
