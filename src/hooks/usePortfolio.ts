@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
+import { useAuth } from '../components/AuthProvider';
 import { useContractAddresses } from './useContractsSocial';
 import { calculatePriceMist } from './useShareMarket';
 import { apiService } from '../lib/api';
@@ -84,6 +85,11 @@ async function fetchAllEvents(
 
 export function usePortfolio(): PortfolioData {
   const account = useCurrentAccount();
+  const { user } = useAuth();
+  // Use the connected wallet address if available, otherwise fall back to the
+  // authenticated user's wallet address (present when wallet is disconnected
+  // but the session is still active, e.g. after a page refresh).
+  const resolvedAddress = account?.address || user?.wallet_address || null;
   const client = useSuiClient();
   const { packageId, originalPackageId, graduationRegistryId } = useContractAddresses();
 
@@ -92,7 +98,7 @@ export function usePortfolio(): PortfolioData {
   const [error, setError] = useState<string | null>(null);
 
   const fetchPortfolio = useCallback(async () => {
-    if (!account?.address || !originalPackageId || originalPackageId === '0x0') {
+    if (!resolvedAddress || !originalPackageId || originalPackageId === '0x0') {
       setHoldings([]);
       return;
     }
@@ -101,7 +107,7 @@ export function usePortfolio(): PortfolioData {
     setError(null);
 
     try {
-      const userAddress = account.address;
+      const userAddress = resolvedAddress;
 
       // Build a map of marketId -> { held: boolean, purchasePrice }
       const marketMap = new Map<string, { held: boolean; purchasePriceMist: bigint; creatorAddress: string }>();
@@ -302,7 +308,7 @@ export function usePortfolio(): PortfolioData {
     } finally {
       setIsLoading(false);
     }
-  }, [account?.address, client, packageId, originalPackageId, graduationRegistryId]);
+  }, [resolvedAddress, client, packageId, originalPackageId, graduationRegistryId]);
 
   useEffect(() => {
     fetchPortfolio();
