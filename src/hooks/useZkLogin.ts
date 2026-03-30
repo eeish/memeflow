@@ -6,11 +6,18 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { generateNonce, generateRandomness, getExtendedEphemeralPublicKey, jwtToAddress } from '@mysten/zklogin';
-import { decodeJwt } from 'jose';
 import { useSuiClient } from '@mysten/dapp-kit';
 import { API_BASE_URL } from '../lib/api';
+import {
+  clearZkLoginSession,
+  createZkLoginSession,
+  decodeZkLoginJwt,
+  deriveZkLoginAddress,
+  fetchZkLoginProofInputs,
+  requireZkLoginSession,
+  saveZkLoginSession,
+  ZKLOGIN_STORAGE_KEYS,
+} from '../lib/zkLogin';
 
 // zkLogin configuration
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
@@ -19,20 +26,7 @@ const REDIRECT_URI = typeof window !== 'undefined'
   : '';
 
 // Backend proxy endpoints (avoid browser CORS)
-const PROVER_URL = `${API_BASE_URL}/zklogin/proof`;
 const SALT_SERVICE_URL = `${API_BASE_URL}/zklogin/salt`;
-
-// Storage keys
-const STORAGE_KEYS = {
-  EPHEMERAL_KEY: 'zklogin_ephemeral_key',
-  RANDOMNESS: 'zklogin_randomness',
-  MAX_EPOCH: 'zklogin_max_epoch',
-  NONCE: 'zklogin_nonce',
-  SESSION: 'zklogin_session',
-  JWT: 'zklogin_jwt',
-  ADDRESS: 'zklogin_address',
-  USER_SALT: 'zklogin_user_salt',
-};
 
 export interface ZkLoginState {
   loading: boolean;
@@ -49,81 +43,6 @@ export interface ZkLoginUser {
   sub: string; // Google user ID
 }
 
-interface ZkLoginSession {
-  ephemeralSecretKey: string;
-  randomness: string;
-  maxEpoch: number;
-  nonce: string;
-}
-
- 
-
-function saveSession(session: ZkLoginSession) {
-  sessionStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(session));
-  sessionStorage.setItem(STORAGE_KEYS.EPHEMERAL_KEY, session.ephemeralSecretKey);
-  sessionStorage.setItem(STORAGE_KEYS.RANDOMNESS, session.randomness);
-  sessionStorage.setItem(STORAGE_KEYS.MAX_EPOCH, session.maxEpoch.toString());
-  sessionStorage.setItem(STORAGE_KEYS.NONCE, session.nonce);
-}
-
-function loadSession(): ZkLoginSession | null {
-  const raw = sessionStorage.getItem(STORAGE_KEYS.SESSION);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as ZkLoginSession;
-    if (
-      !parsed ||
-      typeof parsed.ephemeralSecretKey !== 'string' ||
-      typeof parsed.randomness !== 'string' ||
-      typeof parsed.maxEpoch !== 'number' ||
-      typeof parsed.nonce !== 'string'
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function requireSession(): ZkLoginSession {
-  const session = loadSession();
-  if (!session) {
-    throw new Error('Missing zkLogin session. Please restart login.');
-  }
-  return session;
-}
-
-function buildEphemeralKeyPair(session: ZkLoginSession): Ed25519Keypair {
-  if (!session.ephemeralSecretKey) {
-    throw new Error('Missing ephemeral key. Please restart login.');
-  }
-  return Ed25519Keypair.fromSecretKey(session.ephemeralSecretKey);
-}
-
-function createSession(maxEpoch: number): ZkLoginSession {
-  const keypair = new Ed25519Keypair();
-  const secretKey = keypair.getSecretKey();
-  const randomness = generateRandomness();
-  const nonce = generateNonce(keypair.getPublicKey(), maxEpoch, randomness);
-  return {
-    ephemeralSecretKey: secretKey,
-    randomness,
-    maxEpoch,
-    nonce,
-  };
-}
-
-/**
- * Clear zkLogin session data
- */
-function clearZkLoginSession() {
-  Object.values(STORAGE_KEYS).forEach(key => {
-    sessionStorage.removeItem(key);
-    localStorage.removeItem(key);
-  });
-}
-
 export function useZkLogin() {
   const suiClient = useSuiClient();
   const [state, setState] = useState<ZkLoginState>({
@@ -138,13 +57,13 @@ export function useZkLogin() {
   // Check for existing zkLogin session on mount
   useEffect(() => {
     const checkExistingSession = async () => {
-      const storedAddress = localStorage.getItem(STORAGE_KEYS.ADDRESS);
-      const storedJwt = sessionStorage.getItem(STORAGE_KEYS.JWT);
+      const storedAddress = localStorage.getItem(ZKLOGIN_STORAGE_KEYS.ADDRESS);
+      const storedJwt = sessionStorage.getItem(ZKLOGIN_STORAGE_KEYS.JWT);
 
       if (storedAddress && storedJwt) {
         try {
           // Decode JWT to get user info
-          const decoded = decodeJwt(storedJwt) as any;
+          const decoded = decodeZkLoginJwt(storedJwt) as any;
 
           // Check if JWT is still valid
           if (decoded.exp && decoded.exp * 1000 > Date.now()) {
@@ -239,8 +158,8 @@ export function useZkLogin() {
 
       // Always create a fresh session per login attempt
       clearZkLoginSession();
-      const session = createSession(maxEpoch);
-      saveSession(session);
+      const session = createZkLoginSession(maxEpoch);
+      saveZkLoginSession(session);
       const nonce = session.nonce;
 
       // Build Google OAuth URL
@@ -251,7 +170,7 @@ export function useZkLogin() {
         scope: 'openid email profile',
         nonce: nonce,
       });
-      sessionStorage.setItem(STORAGE_KEYS.NONCE, nonce);
+      sessionStorage.setItem(ZKLOGIN_STORAGE_KEYS.NONCE, nonce);
 
       // Redirect to Google
       window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
@@ -270,17 +189,17 @@ export function useZkLogin() {
    */
   const completeZkLogin = async (jwt: string) => {
     // Store JWT
-    sessionStorage.setItem(STORAGE_KEYS.JWT, jwt);
+    sessionStorage.setItem(ZKLOGIN_STORAGE_KEYS.JWT, jwt);
 
     // Decode JWT
-    const decoded = decodeJwt(jwt) as any;
+    const decoded = decodeZkLoginJwt(jwt) as any;
     console.log('JWT decoded:', { sub: decoded.sub, email: decoded.email });
 
     if (!decoded.nonce) {
       throw new Error('Missing nonce in id_token. Please restart login.');
     }
 
-    const session = requireSession();
+    const session = requireZkLoginSession();
     if (decoded.nonce !== session.nonce) {
       throw new Error('zkLogin nonce mismatch. Please restart login.');
     }
@@ -297,58 +216,12 @@ export function useZkLogin() {
     }
 
     const { salt } = await saltResponse.json();
-    localStorage.setItem(STORAGE_KEYS.USER_SALT, salt);
+    localStorage.setItem(ZKLOGIN_STORAGE_KEYS.USER_SALT, salt);
+    await fetchZkLoginProofInputs(jwt, salt);
 
-    // Get ephemeral keypair and session values
-    const ephemeralKeyPair = buildEphemeralKeyPair(session);
-    const maxEpoch = session.maxEpoch;
-    const jwtRandomness = session.randomness;
+    const address = deriveZkLoginAddress(jwt, salt);
 
-    const recomputedNonce = generateNonce(
-      ephemeralKeyPair.getPublicKey(),
-      maxEpoch,
-      jwtRandomness
-    );
-
-    if (decoded.nonce !== recomputedNonce) {
-      console.warn('zkLogin nonce mismatch details:', {
-        jwtNonce: decoded.nonce,
-        storedNonce: session.nonce,
-        recomputedNonce,
-      });
-      throw new Error('zkLogin nonce mismatch. Please restart login.');
-    }
-
-    // Get extended ephemeral public key
-    const extendedEphemeralPublicKey = getExtendedEphemeralPublicKey(
-      ephemeralKeyPair.getPublicKey()
-    );
-
-    // Get zkLogin proof from prover
-    const proofResponse = await fetch(PROVER_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jwt,
-        extendedEphemeralPublicKey,
-        maxEpoch,
-        jwtRandomness,
-        salt,
-        keyClaimName: 'sub',
-      }),
-    });
-
-    if (!proofResponse.ok) {
-      const errorText = await proofResponse.text();
-      console.error('Prover error:', errorText);
-      throw new Error('Failed to generate zkLogin proof');
-    }
-
-    const { proofPoints, issBase64Details, headerBase64 } = await proofResponse.json();
-
-    const address = jwtToAddress(jwt, salt);
-
-    localStorage.setItem(STORAGE_KEYS.ADDRESS, address);
+    localStorage.setItem(ZKLOGIN_STORAGE_KEYS.ADDRESS, address);
 
     // Update state
     const user: ZkLoginUser = {
@@ -384,36 +257,11 @@ export function useZkLogin() {
     });
   }, []);
 
-  /**
-   * Get zkLogin signature for a transaction
-   */
-  const getSignature = useCallback(async (txBytes: Uint8Array) => {
-    const jwt = sessionStorage.getItem(STORAGE_KEYS.JWT);
-    const salt = localStorage.getItem(STORAGE_KEYS.USER_SALT);
-
-    if (!jwt || !salt) {
-      throw new Error('zkLogin session not found');
-    }
-
-    const session = requireSession();
-    const ephemeralKeyPair = buildEphemeralKeyPair(session);
-
-    // Sign the transaction with ephemeral key
-    const ephemeralSignature = await ephemeralKeyPair.signTransaction(txBytes);
-
-    // Get the zkLogin signature
-    // This would combine the ephemeral signature with the zkProof
-    // For full implementation, store and use the proof from completeZkLogin
-
-    return ephemeralSignature;
-  }, []);
-
   return {
     ...state,
     user: zkLoginUser,
     startGoogleLogin,
     signOut,
-    getSignature,
     isConfigured: !!GOOGLE_CLIENT_ID,
   };
 }

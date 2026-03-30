@@ -1,14 +1,10 @@
 import { useState, useCallback, useEffect } from 'react';
-import { 
-  useCurrentAccount,
-  useSignAndExecuteTransaction,
-  useSuiClient,
-  useSuiClientQuery
-} from '@mysten/dapp-kit';
+import { useSuiClient } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
-import { SUI_CLOCK_OBJECT_ID } from '@mysten/sui/utils';
 import { useContractAddresses } from './useContractsSocial';
 import { MAX_SUPPLY, TERM2_DENOM_BASE } from '../lib/graduation';
+import { useActiveAddress } from './useActiveAddress';
+import { useTransactionExecutor } from './useTransactionExecutor';
 
 // Constants from the contract (share_market.move)
 // Bonding curve: p(x) = 0.02 + 0.35/(x+3) + 1/(TERM2_DENOM_BASE-x) SUI
@@ -65,9 +61,9 @@ export function formatMistToSui(mist: bigint): string {
 
 
 export function useSocialFollow() {
-  const account = useCurrentAccount();
+  const activeAddress = useActiveAddress();
   const client = useSuiClient();
-  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+  const { executeTransaction } = useTransactionExecutor();
   // packageId = latest version for calling functions
   // originalPackageId = first deployment for querying existing objects
   const { packageId, originalPackageId } = useContractAddresses();
@@ -97,9 +93,9 @@ export function useSocialFollow() {
   // Create profile (FollowBook + Market)
   // Only requires username (token name) - cannot be changed later
   const createProfile = useCallback(async (username: string) => {
-    if (!account) {
-      setError('Wallet not connected');
-      throw new Error('Wallet not connected');
+    if (!activeAddress) {
+      setError('Please sign in to continue');
+      throw new Error('Please sign in to continue');
     }
 
     if (!PACKAGE_ID || PACKAGE_ID === '0x0' || PACKAGE_ID === '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -112,7 +108,7 @@ export function useSocialFollow() {
     console.log('Creating profile with:', {
       packageId: PACKAGE_ID,
       usernameLength: username.length,
-      walletAddress: account.address,
+      walletAddress: activeAddress,
       rpcUrl: client.url
     });
 
@@ -133,20 +129,12 @@ export function useSocialFollow() {
         ],
       });
 
-      const result = await new Promise<any>((resolve, reject) => {
-        signAndExecute(
-          {
-            transaction: tx,
-            options: {
-              showEffects: true,
-              showEvents: true,
-            },
-          },
-          {
-            onSuccess: resolve,
-            onError: reject,
-          }
-        );
+      const result = await executeTransaction({
+        transaction: tx,
+        options: {
+          showEffects: true,
+          showEvents: true,
+        },
       });
 
       if (result?.effects?.status?.status && result.effects.status.status !== 'success') {
@@ -162,7 +150,7 @@ export function useSocialFollow() {
     } finally {
       setLoading(false);
     }
-  }, [account, signAndExecute, PACKAGE_ID]);
+  }, [activeAddress, client.url, executeTransaction, PACKAGE_ID]);
 
   // Follow a user (buy key)
   const followUser = useCallback(async (
@@ -170,7 +158,7 @@ export function useSocialFollow() {
     targetProfileId: string,
     currentSupply: number
   ) => {
-    if (!account || !userProfile) {
+    if (!activeAddress || !userProfile) {
       setError('Profile not initialized');
       return;
     }
@@ -212,59 +200,47 @@ export function useSocialFollow() {
         });
       }
 
-      await signAndExecute(
-        {
-          transaction: tx,
-          options: {
-            showEffects: true,
-            showEvents: true,
-          },
+      const result = await executeTransaction({
+        transaction: tx,
+        options: {
+          showEffects: true,
+          showEvents: true,
         },
-        {
-          onSuccess: (result) => {
-            console.log('Successfully followed user:', result);
-            
-            // Update local state
-            setFollowingList(prev => [...prev, targetProfileId]);
-            if (hasSponsored) {
-              setUserProfile(prev => prev ? {
-                ...prev,
-                sponsorLeft: prev.sponsorLeft - 1,
-                followingCount: prev.followingCount + 1
-              } : null);
-            } else {
-              setUserProfile(prev => prev ? {
-                ...prev,
-                followingCount: prev.followingCount + 1
-              } : null);
-            }
-            
-            // Store in localStorage for persistence
-            if (account.address) {
-              const key = `following_${account.address}`;
-              localStorage.setItem(key, JSON.stringify([...followingList, targetProfileId]));
-            }
-          },
-          onError: (error) => {
-            console.error('Failed to follow user:', error);
-            setError(error.message);
-          },
-        }
-      );
+      });
+
+      console.log('Successfully followed user:', result);
+
+      const updatedFollowing = [...followingList, targetProfileId];
+      setFollowingList(updatedFollowing);
+      if (hasSponsored) {
+        setUserProfile(prev => prev ? {
+          ...prev,
+          sponsorLeft: prev.sponsorLeft - 1,
+          followingCount: prev.followingCount + 1
+        } : null);
+      } else {
+        setUserProfile(prev => prev ? {
+          ...prev,
+          followingCount: prev.followingCount + 1
+        } : null);
+      }
+
+      const key = `following_${activeAddress}`;
+      localStorage.setItem(key, JSON.stringify(updatedFollowing));
     } catch (err: any) {
       console.error('Error following user:', err);
       setError(err.message || 'Failed to follow user');
     } finally {
       setLoading(false);
     }
-  }, [account, userProfile, signAndExecute, followingList, PACKAGE_ID]);
+  }, [activeAddress, userProfile, executeTransaction, followingList, PACKAGE_ID]);
 
   // Unfollow a user (sell key)
   const unfollowUser = useCallback(async (
     targetMarketId: string,
     targetProfileId: string
   ) => {
-    if (!account || !userProfile) {
+    if (!activeAddress || !userProfile) {
       setError('Profile not initialized');
       return;
     }
@@ -284,51 +260,38 @@ export function useSocialFollow() {
         ],
       });
 
-      await signAndExecute(
-        {
-          transaction: tx,
-          options: {
-            showEffects: true,
-            showEvents: true,
-          },
+      const result = await executeTransaction({
+        transaction: tx,
+        options: {
+          showEffects: true,
+          showEvents: true,
         },
-        {
-          onSuccess: (result) => {
-            console.log('Successfully unfollowed user:', result);
-            
-            // Update local state
-            setFollowingList(prev => prev.filter(id => id !== targetProfileId));
-            setUserProfile(prev => prev ? {
-              ...prev,
-              followingCount: prev.followingCount - 1
-            } : null);
-            
-            // Update localStorage
-            if (account.address) {
-              const key = `following_${account.address}`;
-              const updated = followingList.filter(id => id !== targetProfileId);
-              localStorage.setItem(key, JSON.stringify(updated));
-            }
-          },
-          onError: (error) => {
-            console.error('Failed to unfollow user:', error);
-            setError(error.message);
-          },
-        }
-      );
+      });
+
+      console.log('Successfully unfollowed user:', result);
+
+      const updatedFollowing = followingList.filter(id => id !== targetProfileId);
+      setFollowingList(updatedFollowing);
+      setUserProfile(prev => prev ? {
+        ...prev,
+        followingCount: prev.followingCount - 1
+      } : null);
+
+      const key = `following_${activeAddress}`;
+      localStorage.setItem(key, JSON.stringify(updatedFollowing));
     } catch (err: any) {
       console.error('Error unfollowing user:', err);
       setError(err.message || 'Failed to unfollow user');
     } finally {
       setLoading(false);
     }
-  }, [account, userProfile, signAndExecute, followingList, PACKAGE_ID]);
+  }, [activeAddress, userProfile, executeTransaction, followingList, PACKAGE_ID]);
 
   // Batch follow multiple users
   const batchFollowUsers = useCallback(async (
     targets: Array<{ marketId: string; profileId: string; supply: number }>
   ) => {
-    if (!account || !userProfile) {
+    if (!activeAddress || !userProfile) {
       setError('Profile not initialized');
       return;
     }
@@ -342,14 +305,11 @@ export function useSocialFollow() {
       // Prepare markets and payments arrays
       const markets: any[] = [];
       const payments: any[] = [];
-      let totalCost = BigInt(0);
-      
       for (const target of targets) {
         markets.push(tx.object(target.marketId));
         
         // Calculate price for each follow
         const price = calculatePriceMist(target.supply + 1);
-        totalCost += price;
         
         // Split coin for each payment
         const [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(price.toString())]);
@@ -366,43 +326,35 @@ export function useSocialFollow() {
         ],
       });
 
-      await signAndExecute(
-        {
-          transaction: tx,
-          options: {
-            showEffects: true,
-            showEvents: true,
-          },
+      const result = await executeTransaction({
+        transaction: tx,
+        options: {
+          showEffects: true,
+          showEvents: true,
         },
-        {
-          onSuccess: (result) => {
-            console.log('Successfully batch followed users:', result);
-            
-            // Update local state
-            const newFollows = targets.map(t => t.profileId);
-            setFollowingList(prev => [...prev, ...newFollows]);
-            setUserProfile(prev => prev ? {
-              ...prev,
-              followingCount: prev.followingCount + targets.length
-            } : null);
-          },
-          onError: (error) => {
-            console.error('Failed to batch follow users:', error);
-            setError(error.message);
-          },
-        }
-      );
+      });
+
+      console.log('Successfully batch followed users:', result);
+
+      const newFollows = targets.map(t => t.profileId);
+      const updatedFollowing = [...followingList, ...newFollows];
+      setFollowingList(updatedFollowing);
+      setUserProfile(prev => prev ? {
+        ...prev,
+        followingCount: prev.followingCount + targets.length
+      } : null);
+      localStorage.setItem(`following_${activeAddress}`, JSON.stringify(updatedFollowing));
     } catch (err: any) {
       console.error('Error batch following users:', err);
       setError(err.message || 'Failed to batch follow users');
     } finally {
       setLoading(false);
     }
-  }, [account, userProfile, signAndExecute, PACKAGE_ID]);
+  }, [activeAddress, userProfile, executeTransaction, followingList, PACKAGE_ID]);
 
   // Fetch user's profile data
   const fetchUserProfile = useCallback(async () => {
-    if (!account) return;
+    if (!activeAddress) return;
     if (
       !ORIGINAL_PACKAGE_ID ||
       ORIGINAL_PACKAGE_ID === '0x0' ||
@@ -415,7 +367,7 @@ export function useSocialFollow() {
       // Query user's FollowBook and Market objects
       // Use ORIGINAL_PACKAGE_ID since objects were created with the original package type
       const objects = await client.getOwnedObjects({
-        owner: account.address,
+        owner: activeAddress,
         filter: {
           StructType: `${ORIGINAL_PACKAGE_ID}::social_follow::FollowBook`,
         },
@@ -432,14 +384,14 @@ export function useSocialFollow() {
         if (content) {
           // Mock profile data (would come from actual object in production)
           setUserProfile({
-            id: account.address,
-            owner: account.address,
+            id: activeAddress,
+            owner: activeAddress,
             followBookId: objects.data[0].data?.objectId!,
             marketId: '', // Would fetch Market object similarly
             followerCount: 0,
             followingCount: content.fields.following_count || 0,
             sponsorLeft: content.fields.sponsor_left || 0,
-            username: account.address.slice(0, 8),
+            username: activeAddress.slice(0, 8),
             bio: '',
             avatarUrl: '',
           });
@@ -448,13 +400,13 @@ export function useSocialFollow() {
     } catch (err) {
       console.error('Error fetching user profile:', err);
     }
-  }, [account, client, ORIGINAL_PACKAGE_ID]);
+  }, [activeAddress, client, ORIGINAL_PACKAGE_ID]);
 
   // Load following list from localStorage
   const loadFollowingList = useCallback(() => {
-    if (!account) return;
+    if (!activeAddress) return;
     
-    const key = `following_${account.address}`;
+    const key = `following_${activeAddress}`;
     const saved = localStorage.getItem(key);
     if (saved) {
       try {
@@ -463,7 +415,7 @@ export function useSocialFollow() {
         console.error('Error loading following list:', err);
       }
     }
-  }, [account]);
+  }, [activeAddress]);
 
   // Check if user is following someone
   const isFollowing = useCallback((profileId: string): boolean => {
@@ -484,11 +436,11 @@ export function useSocialFollow() {
 
   // Initialize on mount
   useEffect(() => {
-    if (account && ORIGINAL_PACKAGE_ID) {
+    if (activeAddress && ORIGINAL_PACKAGE_ID) {
       fetchUserProfile();
       loadFollowingList();
     }
-  }, [account, ORIGINAL_PACKAGE_ID, fetchUserProfile, loadFollowingList]);
+  }, [activeAddress, ORIGINAL_PACKAGE_ID, fetchUserProfile, loadFollowingList]);
 
   return {
     // State

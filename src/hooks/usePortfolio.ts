@@ -89,7 +89,7 @@ export function usePortfolio(): PortfolioData {
   // Use the connected wallet address if available, otherwise fall back to the
   // authenticated user's wallet address (present when wallet is disconnected
   // but the session is still active, e.g. after a page refresh).
-  const resolvedAddress = account?.address || user?.wallet_address || null;
+  const resolvedAddress = user?.wallet_address || account?.address || null;
   const client = useSuiClient();
   const { packageId, originalPackageId, graduationRegistryId } = useContractAddresses();
 

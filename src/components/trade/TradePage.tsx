@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
+import { useSuiClient } from '@mysten/dapp-kit';
 import { ArrowLeft, ChevronDown, Users } from '../ui-simple/Icons';
 import { Button } from '../ui-simple/Button';
 import { Card } from '../ui-simple/Card';
+import { useActiveAddress } from '../../hooks/useActiveAddress';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { useShareMarket, calculatePriceMist, formatMistToSui } from '../../hooks/useShareMarket';
 import { formatMistAmount, formatTokenAmount, useAmmPool } from '../../hooks/useAmmPool';
@@ -213,14 +214,14 @@ function ShareTradePanel({
   snapshot: MarketSnapshot;
   onTradeComplete: () => void;
 }) {
-  const account = useCurrentAccount();
+  const activeAddress = useActiveAddress();
   const { buyShare, sellShare } = useShareMarket();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
 
   const isHolder = !snapshot.isLoading &&
-    !!account?.address &&
-    snapshot.holderList.some((holder) => holder.address === account.address);
+    !!activeAddress &&
+    snapshot.holderList.some((holder) => holder.address === activeAddress);
 
   const marketFull = snapshot.holders >= MAX_SUPPLY;
   const buyPriceMist = calculatePriceMist(Math.min(snapshot.holders + 1, MAX_SUPPLY));
@@ -276,8 +277,8 @@ function ShareTradePanel({
         </span>
       </div>
 
-      {!account ? (
-        <p className="py-2 text-center text-xs text-gray-400">Connect wallet to trade</p>
+      {!activeAddress ? (
+        <p className="py-2 text-center text-xs text-gray-400">Sign in to trade</p>
       ) : snapshot.isLoading ? (
         <div className="h-9 animate-pulse rounded-md bg-gray-100" />
       ) : isHolder ? (
@@ -405,7 +406,7 @@ function TokenTradePanel({
   tokenType?: string;
   onTradeComplete: () => void;
 }) {
-  const account = useCurrentAccount();
+  const activeAddress = useActiveAddress();
   const client = useSuiClient();
   const { poolAvailable, marketState, isLoading, isSubmitting, error, refresh, getQuote, buyExactSuiForTokens, sellExactTokensForSui } = useAmmPool(poolId, tokenType);
   const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
@@ -437,10 +438,10 @@ function TokenTradePanel({
   const exceedsBalance = side === 'buy'
     ? amountInRaw > (suiBalance ?? 0n)
     : amountInRaw > (tokenBalance ?? 0n);
-  const canReview = !!account && poolAvailable && amountInRaw > 0n && !exceedsBalance && quoteOutRaw > 0n;
+  const canReview = !!activeAddress && poolAvailable && amountInRaw > 0n && !exceedsBalance && quoteOutRaw > 0n;
 
   useEffect(() => {
-    if (!account?.address) {
+    if (!activeAddress) {
       setTokenBalance(null);
       setSuiBalance(null);
       return;
@@ -450,9 +451,9 @@ function TokenTradePanel({
 
     Promise.all([
       tokenType
-        ? client.getCoins({ owner: account.address, coinType: tokenType })
+        ? client.getCoins({ owner: activeAddress, coinType: tokenType })
         : Promise.resolve(null),
-      client.getBalance({ owner: account.address }),
+      client.getBalance({ owner: activeAddress }),
     ])
       .then(([tokenCoins, sui]) => {
         if (cancelled) return;
@@ -471,7 +472,7 @@ function TokenTradePanel({
     return () => {
       cancelled = true;
     };
-  }, [account?.address, balanceRefreshKey, client, tokenType]);
+  }, [activeAddress, balanceRefreshKey, client, tokenType]);
 
   const handleConfirmTrade = async () => {
     if (!canReview) return;
@@ -483,13 +484,13 @@ function TokenTradePanel({
 
     if (result.success) {
       // Record swap for OHLCV chart
-      if (poolId && account?.address && quoteOutRaw > 0n) {
+      if (poolId && activeAddress && quoteOutRaw > 0n) {
         const suiMist = side === 'buy' ? Number(amountInRaw) : Number(quoteOutRaw);
         const tokenAmt = side === 'buy' ? Number(quoteOutRaw) : Number(amountInRaw);
         const priceSui = tokenAmt > 0 ? (suiMist / 1e9) / (tokenAmt / 1e9) : 0;
         apiService.recordSwap({
           pool_id: poolId,
-          trader: account.address,
+          trader: activeAddress,
           side,
           sui_amount_mist: suiMist,
           token_amount: tokenAmt,
@@ -549,8 +550,8 @@ function TokenTradePanel({
           )}
         </div>
 
-        {!account ? (
-          <p className="py-1 text-center text-xs text-gray-400">Connect wallet to view balances</p>
+        {!activeAddress ? (
+          <p className="py-1 text-center text-xs text-gray-400">Sign in to view balances</p>
         ) : !poolAvailable ? (
           <div className="rounded-md border border-dashed border-gray-200 px-4 py-5 text-center">
             <p className="text-sm font-medium text-gray-700">Awaiting AMM pool</p>

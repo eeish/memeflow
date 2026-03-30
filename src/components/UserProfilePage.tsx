@@ -11,7 +11,7 @@ import { useShareMarket, calculatePriceMist, formatMistToSui } from '../hooks/us
 import { useGraduation } from '../hooks/useGraduation';
 import { GRADUATION_THRESHOLD, MAX_SUPPLY, graduationProgressPercent } from '../lib/graduation';
 import { useAuth } from './AuthProvider';
-import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useActiveAddress } from '../hooks/useActiveAddress';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useSharePurchaseFeedback } from '../contexts/SharePurchaseFeedbackContext';
 import { BuyShareDialog } from './BuyShareDialog';
@@ -34,7 +34,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
 
   // Follow/Buy Share state
   const { user: currentUser } = useAuth();
-  const currentAccount = useCurrentAccount();
+  const activeAddress = useActiveAddress();
   const { error: showError } = useNotifications();
   const { showSuccessReceipt } = useSharePurchaseFeedback();
   const { findMarketByOwner, buyShare, checkHolderStatus, loading: shareLoading } = useShareMarket();
@@ -186,8 +186,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
 
   // Handle opening the buy share dialog
   const handleBuyShareClick = useCallback(() => {
-    if (!currentAccount) {
-      setFollowError('Please connect your wallet to buy shares');
+    if (!activeAddress) {
+      setFollowError('Please sign in to buy shares');
       return;
     }
     if (isHolder) {
@@ -209,7 +209,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ user, onOpenTr
     setFollowError(null);
     setPurchaseError(null);
     setBuyDialogOpen(true);
-  }, [currentAccount, marketInfo, holdersCount, shareLoading, isHolder]);
+  }, [activeAddress, marketInfo, holdersCount, shareLoading, isHolder]);
 
   // Handle actual share purchase via smart contract
   const handleConfirmPurchase = useCallback(async () => {

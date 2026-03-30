@@ -3,11 +3,12 @@ import { Send, Image as ImageIcon, Video, X } from './ui-simple/Icons';
 import { Button } from './ui-simple/Button';
 import { Textarea } from './ui-simple/Textarea';
 import { apiService } from '../lib/api';
-import { useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
 import { useContractAddresses } from '../hooks/useContractsSocial';
 import { useAuth } from './AuthProvider';
+import { useActiveAddress } from '../hooks/useActiveAddress';
+import { useTransactionExecutor } from '../hooks/useTransactionExecutor';
 import { computeContentHash, hashToBytes } from '../lib/postHash';
 
 interface MediaItem {
@@ -29,9 +30,9 @@ export function PostComposer({ onPost }: PostComposerProps) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
-  const account = useCurrentAccount();
+  const activeAddress = useActiveAddress();
   const { user } = useAuth();
-  const { mutateAsync: signAndExecuteAsync } = useSignAndExecuteTransaction();
+  const { executeTransaction } = useTransactionExecutor();
   const { packageId } = useContractAddresses();
 
   /**
@@ -51,8 +52,8 @@ export function PostComposer({ onPost }: PostComposerProps) {
     timestampMs: number,
     postId: string
   ): Promise<void> => {
-    if (!account?.address) {
-      throw new Error('Please connect your wallet to publish');
+    if (!activeAddress) {
+      throw new Error('Please sign in to publish');
     }
 
     if (!packageId || packageId === '0x0' || packageId === '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -81,7 +82,7 @@ export function PostComposer({ onPost }: PostComposerProps) {
     });
 
     // Use mutateAsync for proper Promise handling - no retry on rejection
-    await signAndExecuteAsync({
+    await executeTransaction({
       transaction: tx,
       options: {
         showEffects: true,
@@ -102,8 +103,8 @@ export function PostComposer({ onPost }: PostComposerProps) {
 
     setUploadError(null);
 
-    if (!account?.address) {
-      setUploadError('Please connect your wallet to publish');
+    if (!activeAddress) {
+      setUploadError('Please sign in to publish');
       return;
     }
 
@@ -135,7 +136,7 @@ export function PostComposer({ onPost }: PostComposerProps) {
       // Step 1: Compute content hash client-side
       console.log('🔐 Computing content hash...');
       const contentHash = await computeContentHash(
-        account.address,
+        activeAddress,
         timestampMs,
         trimmedContent
       );
@@ -160,7 +161,7 @@ export function PostComposer({ onPost }: PostComposerProps) {
         console.log('📤 Uploading', media.length, 'files to R2...');
         const uploadResult = await apiService.batchUploadMedia(
           media.map(m => m.file),
-          account.address
+          activeAddress
         );
 
         if (!uploadResult.success || !uploadResult.data || uploadResult.data.length === 0) {
@@ -179,7 +180,7 @@ export function PostComposer({ onPost }: PostComposerProps) {
       console.log('📝 Creating post in database...');
       const createResult = await apiService.createPost({
         author_id: user.id,
-        wallet_address: account.address,
+        wallet_address: activeAddress,
         content: trimmedContent,
         media_urls: mediaUrls.length > 0 ? mediaUrls : undefined,
       });

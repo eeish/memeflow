@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from '@mysten/dapp-kit';
+import { useSuiClient } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { useContractAddresses } from './useContractsSocial';
+import { useActiveAddress } from './useActiveAddress';
+import { useTransactionExecutor } from './useTransactionExecutor';
 
 const BPS_DENOMINATOR = 10_000n;
 const MIST_PER_SUI = 1_000_000_000n;
@@ -46,9 +48,9 @@ function quoteAmountOut(
 }
 
 export function useAmmPool(poolId?: string, tokenType?: string) {
-  const account = useCurrentAccount();
+  const activeAddress = useActiveAddress();
   const client = useSuiClient();
-  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+  const { executeTransaction } = useTransactionExecutor();
   const { packageId } = useContractAddresses();
 
   const [marketState, setMarketState] = useState<AmmMarketState | null>(null);
@@ -149,8 +151,8 @@ export function useAmmPool(poolId?: string, tokenType?: string) {
     amountInRaw: bigint,
     minAmountOutRaw: bigint,
   ): Promise<SwapResult> => {
-    if (!account?.address) {
-      return { success: false, error: 'Wallet not connected' };
+    if (!activeAddress) {
+      return { success: false, error: 'Please sign in to continue' };
     }
     if (!packageId || packageId === '0x0') {
       return { success: false, error: 'Contracts not deployed' };
@@ -181,7 +183,7 @@ export function useAmmPool(poolId?: string, tokenType?: string) {
         });
       } else {
         const ownedCoins = await client.getCoins({
-          owner: account.address,
+          owner: activeAddress,
           coinType: tokenType,
         });
         if (!ownedCoins.data.length) {
@@ -205,15 +207,7 @@ export function useAmmPool(poolId?: string, tokenType?: string) {
         });
       }
 
-      const result = await new Promise<unknown>((resolve, reject) => {
-        signAndExecute(
-          { transaction: tx },
-          {
-            onSuccess: resolve,
-            onError: reject,
-          },
-        );
-      });
+      const result = await executeTransaction({ transaction: tx });
 
       const txStatus = await resolveTxStatus(result);
       if (txStatus.status && txStatus.status !== 'success') {
@@ -232,7 +226,7 @@ export function useAmmPool(poolId?: string, tokenType?: string) {
     } finally {
       setIsSubmitting(false);
     }
-  }, [account?.address, client, packageId, poolId, refresh, resolveTxStatus, signAndExecute, tokenType]);
+  }, [activeAddress, client, packageId, poolId, refresh, resolveTxStatus, executeTransaction, tokenType]);
 
   return {
     poolAvailable: !!marketState,

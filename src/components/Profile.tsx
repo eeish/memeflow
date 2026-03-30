@@ -6,7 +6,7 @@ import { useShareMarket, calculatePriceMist, formatMistToSui } from '../hooks/us
 import { useGraduation } from '../hooks/useGraduation';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useSharePurchaseFeedback } from '../contexts/SharePurchaseFeedbackContext';
-import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useActiveAddress } from '../hooks/useActiveAddress';
 import { apiService, type PostWithAuthor, type User } from '../lib/api';
 import type { TradePageContext } from '../types/trade';
 import { DeletePostDialog } from './DeletePostDialog';
@@ -94,7 +94,7 @@ export function Profile({ user, onClose, onEditProfile, onOpenTrade }: ProfilePr
   const { findMarketByOwner, buyShare, checkHolderStatus, loading: shareLoading } = useShareMarket();
   const { error: showError } = useNotifications();
   const { showSuccessReceipt } = useSharePurchaseFeedback();
-  const currentAccount = useCurrentAccount();
+  const activeAddress = useActiveAddress();
 
   // Posts from backend service
   const [posts, setPosts] = useState<PostWithAuthor[]>([]);
@@ -121,8 +121,8 @@ export function Profile({ user, onClose, onEditProfile, onOpenTrade }: ProfilePr
   const isGraduated = marketInfo?.graduated || phase === 'graduated';
 
   // Determine if viewing own profile or another user's
-  const isOwnProfile = currentAccount?.address && user.wallet_address &&
-    currentAccount.address.toLowerCase() === user.wallet_address.toLowerCase();
+  const isOwnProfile = !!activeAddress && !!user.wallet_address &&
+    activeAddress.toLowerCase() === user.wallet_address.toLowerCase();
 
   // Get holder count from market info or user data
   // When market exists, minimum is 1 (creator always holds first share)
@@ -261,8 +261,8 @@ export function Profile({ user, onClose, onEditProfile, onOpenTrade }: ProfilePr
 
   // Handle buy share - triggers smart contract
   const handleBuyShareClick = useCallback(() => {
-    if (!currentAccount) {
-      showError('Please connect your wallet to buy shares');
+    if (!activeAddress) {
+      showError('Please sign in to buy shares');
       return;
     }
     if (isHolder) {
@@ -279,7 +279,7 @@ export function Profile({ user, onClose, onEditProfile, onOpenTrade }: ProfilePr
     }
     setPurchaseError(null);
     setBuyShareDialogOpen(true);
-  }, [currentAccount, marketInfo, holderCount, showError, isHolder]);
+  }, [activeAddress, marketInfo, holderCount, showError, isHolder]);
 
   const handleConfirmPurchase = useCallback(async () => {
     if (!marketInfo || isPurchasing) {
@@ -424,7 +424,7 @@ export function Profile({ user, onClose, onEditProfile, onOpenTrade }: ProfilePr
                 Trade ${activeTokenSymbol}
               </Button>
             )}
-            {!graduationLoading && !isOwnProfile && currentAccount && !!marketInfo && !isGraduated && !isHolder && holderCount < MAX_SUPPLY && (
+            {!graduationLoading && !isOwnProfile && activeAddress && !!marketInfo && !isGraduated && !isHolder && holderCount < MAX_SUPPLY && (
               <Button
                 size="sm"
                 onClick={handleBuyShareClick}

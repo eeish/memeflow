@@ -79,7 +79,12 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
   }, [user, onAuthChange]);
 
   useEffect(() => {
-    if (!zkAuthenticated || !zkAddress || user || loading || zkAuthenticating) {
+    const zkSetupPending =
+      showMemeLaunch &&
+      pendingAuthMethod === 'zklogin' &&
+      pendingWalletAddress === zkAddress;
+
+    if (!zkAuthenticated || !zkAddress || user || loading || zkAuthenticating || zkSetupPending) {
       return;
     }
 
@@ -107,7 +112,16 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     };
 
     runZkLoginAuthentication();
-  }, [zkAuthenticated, zkAddress, user, loading, zkAuthenticating]);
+  }, [
+    zkAuthenticated,
+    zkAddress,
+    user,
+    loading,
+    zkAuthenticating,
+    showMemeLaunch,
+    pendingAuthMethod,
+    pendingWalletAddress,
+  ]);
 
   // Periodic authentication verification - check every 5 seconds
   useEffect(() => {
@@ -283,6 +297,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     setAuthenticatedWallet('');
     setShowMemeLaunch(false);
     setPendingWalletAddress('');
+    setPendingAuthMethod('wallet');
     // Don't set error on logout - user will see clean login screen
     setError('');
     setSuccess('');
@@ -650,7 +665,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       setLoading(true);
       setError('');
 
-      console.log('🚀 Creating backend user', pendingAuthMethod === 'wallet' ? '(on-chain profile already created)' : '(zkLogin user)');
+      console.log('🚀 Creating backend user (on-chain profile already created)');
       console.log('🔑 Pending wallet address:', pendingWalletAddress);
 
       // Create user in backend database (on-chain profile was created in ProfileSetupFlow)
@@ -669,12 +684,13 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         wallet_address: pendingWalletAddress,
         authMethod: pendingAuthMethod as 'wallet' | 'zklogin',
         tokenSymbol: userData.username.toUpperCase(),
-        hasOnChainProfile: pendingAuthMethod === 'wallet'
+        hasOnChainProfile: true
       };
 
       setUser(userState);
       setShowMemeLaunch(false);
       setPendingWalletAddress('');
+      setPendingAuthMethod('wallet');
 
       // Store auth info persistently
       localStorage.setItem('wallet_address', pendingWalletAddress);
@@ -747,6 +763,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
       setSuccess('');
       setLoading(false);
       setAuthenticatedWallet('');
+      setPendingAuthMethod('wallet');
       
       console.log('Sign out completed');
     } catch (error) {
@@ -903,7 +920,7 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         console.log('✅ [REFRESH_USER] User data refreshed');
         const refreshedUser = {
           ...data.data,
-          authMethod: 'wallet' as const,
+          authMethod: user.authMethod,
           wallet_address: user.wallet_address
         };
         setUser(refreshedUser);

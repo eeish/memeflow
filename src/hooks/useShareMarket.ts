@@ -1,12 +1,12 @@
 import { useState, useCallback } from 'react';
 import {
-  useCurrentAccount,
-  useSignAndExecuteTransaction,
   useSuiClient,
 } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { useContractAddresses } from './useContractsSocial';
 import { MAX_SUPPLY, TERM2_DENOM_BASE } from '../lib/graduation';
+import { useActiveAddress } from './useActiveAddress';
+import { useTransactionExecutor } from './useTransactionExecutor';
 
 // Constants from the contract (share_market.move)
 const MIST_PER_SUI = 1_000_000_000;
@@ -45,9 +45,9 @@ export interface MarketInfo {
 }
 
 export function useShareMarket() {
-  const account = useCurrentAccount();
+  const activeAddress = useActiveAddress();
   const client = useSuiClient();
-  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+  const { executeTransaction } = useTransactionExecutor();
   // packageId = latest version for calling contract functions
   // originalPackageId = first deployment for querying existing objects (unchanged across upgrades)
   const { packageId, originalPackageId } = useContractAddresses();
@@ -207,8 +207,8 @@ export function useShareMarket() {
     currentHolders: number,
     marketPackageId?: string,
   ): Promise<{ success: boolean; error?: string; txDigest?: string }> => {
-    if (!account) {
-      return { success: false, error: 'Wallet not connected' };
+    if (!activeAddress) {
+      return { success: false, error: 'Please sign in to continue' };
     }
 
     // Use the market's own package to call buy_share so old markets remain purchasable
@@ -244,16 +244,8 @@ export function useShareMarket() {
         ],
       });
 
-      const result = await new Promise<any>((resolve, reject) => {
-        signAndExecute(
-          {
-            transaction: tx,
-          },
-          {
-            onSuccess: resolve,
-            onError: reject,
-          }
-        );
+      const result = await executeTransaction({
+        transaction: tx,
       });
 
       const txStatus = await resolveTxStatus(result);
@@ -278,7 +270,7 @@ export function useShareMarket() {
     } finally {
       setLoading(false);
     }
-  }, [account, packageId, resolveTxStatus, signAndExecute]);
+  }, [activeAddress, packageId, resolveTxStatus, executeTransaction]);
 
   // Sell a share in a market.
   // marketPackageId: the package the market was created under (may differ from current packageId
@@ -287,8 +279,8 @@ export function useShareMarket() {
     marketObjectId: string,
     marketPackageId?: string,
   ): Promise<{ success: boolean; error?: string; txDigest?: string }> => {
-    if (!account) {
-      return { success: false, error: 'Wallet not connected' };
+    if (!activeAddress) {
+      return { success: false, error: 'Please sign in to continue' };
     }
 
     const callPackageId = marketPackageId || packageId;
@@ -310,16 +302,8 @@ export function useShareMarket() {
         ],
       });
 
-      const result = await new Promise<any>((resolve, reject) => {
-        signAndExecute(
-          {
-            transaction: tx,
-          },
-          {
-            onSuccess: resolve,
-            onError: reject,
-          }
-        );
+      const result = await executeTransaction({
+        transaction: tx,
       });
 
       const txStatus = await resolveTxStatus(result);
@@ -344,12 +328,12 @@ export function useShareMarket() {
     } finally {
       setLoading(false);
     }
-  }, [account, packageId, resolveTxStatus, signAndExecute]);
+  }, [activeAddress, packageId, resolveTxStatus, executeTransaction]);
 
   // Create a new market (creator must buy first share)
   const createMarket = useCallback(async (): Promise<{ success: boolean; error?: string; txDigest?: string; marketId?: string }> => {
-    if (!account) {
-      return { success: false, error: 'Wallet not connected' };
+    if (!activeAddress) {
+      return { success: false, error: 'Please sign in to continue' };
     }
 
     if (!packageId || packageId === '0x0') {
@@ -375,16 +359,8 @@ export function useShareMarket() {
         ],
       });
 
-      const result = await new Promise<any>((resolve, reject) => {
-        signAndExecute(
-          {
-            transaction: tx,
-          },
-          {
-            onSuccess: resolve,
-            onError: reject,
-          }
-        );
+      const result = await executeTransaction({
+        transaction: tx,
       });
 
       const txStatus = await resolveTxStatus(result);
@@ -433,13 +409,13 @@ export function useShareMarket() {
     } finally {
       setLoading(false);
     }
-  }, [account, client, packageId, resolveTxStatus, signAndExecute]);
+  }, [activeAddress, client, packageId, resolveTxStatus, executeTransaction]);
 
   // Check if the current user holds a share in a market
   const checkHolderStatus = useCallback(async (
     marketObjectId: string,
   ): Promise<boolean> => {
-    if (!account?.address) {
+    if (!activeAddress) {
       return false;
     }
 
@@ -449,7 +425,7 @@ export function useShareMarket() {
         parentId: marketObjectId,
         name: {
           type: 'address',
-          value: account.address,
+          value: activeAddress,
         },
       });
 
@@ -462,7 +438,7 @@ export function useShareMarket() {
       console.error('Failed to check holder status:', err);
       return false;
     }
-  }, [account, client]);
+  }, [activeAddress, client]);
 
   return {
     loading,

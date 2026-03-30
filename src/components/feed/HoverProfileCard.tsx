@@ -4,7 +4,7 @@ import { apiService, type User } from '../../lib/api';
 import { useShareMarket, calculatePriceMist, formatMistToSui } from '../../hooks/useShareMarket';
 import { useGraduation } from '../../hooks/useGraduation';
 import { GRADUATION_THRESHOLD, MAX_SUPPLY, graduationProgressPercent } from '../../lib/graduation';
-import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useActiveAddress } from '../../hooks/useActiveAddress';
 import { useNotifications } from '../../contexts/NotificationContext';
 import { useSharePurchaseFeedback } from '../../contexts/SharePurchaseFeedbackContext';
 import { UserPlus, UserMinus, ShoppingCart, Loader2 } from '../ui-simple/Icons';
@@ -99,7 +99,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
   onBuyClick,
   onOpenTrade,
 }) => {
-  const account = useCurrentAccount();
+  const activeAddress = useActiveAddress();
   const { findMarketByOwner, buyShare, checkHolderStatus, loading: shareLoading } = useShareMarket();
   const { error: showError } = useNotifications();
   const { showSuccessReceipt } = useSharePurchaseFeedback();
@@ -234,7 +234,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
   }, [holdersCount]);
 
   // Check if this is the current user's own profile
-  const isOwnProfile = !!account?.address && !!walletAddress && account.address.toLowerCase() === walletAddress.toLowerCase();
+  const isOwnProfile = !!activeAddress && !!walletAddress && activeAddress.toLowerCase() === walletAddress.toLowerCase();
 
   // Handle follow action (social follow via API - separate from share purchase)
   const handleFollow = useCallback(async (e: React.MouseEvent) => {
@@ -279,8 +279,8 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
     e.stopPropagation();
     e.preventDefault();
 
-    if (!account) {
-      showError('Please connect your wallet to buy shares');
+    if (!activeAddress) {
+      showError('Please sign in to buy shares');
       return;
     }
 
@@ -311,7 +311,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
     if (onBuyClick) {
       onBuyClick(author);
     }
-  }, [account, marketInfo, holdersCount, shareLoading, marketInfoLoading, isHolder, onBuyClick, author, showError]);
+  }, [activeAddress, marketInfo, holdersCount, shareLoading, marketInfoLoading, isHolder, onBuyClick, author, showError]);
 
   // Handle confirm purchase - execute smart contract
   const handleConfirmPurchase = useCallback(async () => {
@@ -551,7 +551,7 @@ export const HoverProfileCard: React.FC<HoverProfileCardProps> = ({
       )}
 
       {/* Action Buttons */}
-      {!isOwnProfile && account && (
+      {!isOwnProfile && activeAddress && (
         <div className="mt-4 flex items-center gap-2">
           <button
             onClick={isFollowing ? handleUnfollow : handleFollow}
