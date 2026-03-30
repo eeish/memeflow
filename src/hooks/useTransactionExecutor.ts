@@ -12,11 +12,13 @@ import { executeZkLoginTransaction } from '../lib/zkLogin';
 export function useTransactionExecutor() {
   const client = useSuiClient();
   const account = useCurrentAccount();
-  const { user } = useAuth();
+  const { user, pendingWalletAddress, pendingAuthMethod } = useAuth();
   const { mutateAsync: signAndExecuteAsync } = useSignAndExecuteTransaction();
 
-  const activeAddress = user?.wallet_address || account?.address || null;
-  const isZkLogin = user?.authMethod === 'zklogin';
+  const activeAddress = user?.wallet_address || pendingWalletAddress || account?.address || null;
+  const isZkLogin =
+    user?.authMethod === 'zklogin' ||
+    (!user && pendingAuthMethod === 'zklogin' && !!pendingWalletAddress);
 
   const executeTransaction = useCallback(async (params: {
     transaction: Transaction;

@@ -773,18 +773,62 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     }
   };
 
+  // Refresh user data from backend
+  const refreshUser = async () => {
+    if (!user?.wallet_address) {
+      console.log('⚠️ [REFRESH_USER] No wallet address to refresh');
+      return;
+    }
+
+    try {
+      console.log('🔄 [REFRESH_USER] Refreshing user data for:', user.wallet_address);
+      const response = await fetch(`${API_BASE_URL}/users/by-address/${user.wallet_address}`);
+      const data = await response.json();
+
+      if (data.success && data.data) {
+        console.log('✅ [REFRESH_USER] User data refreshed');
+        const refreshedUser = {
+          ...data.data,
+          authMethod: user.authMethod,
+          wallet_address: user.wallet_address
+        };
+        setUser(refreshedUser);
+
+        // Update localStorage
+        localStorage.setItem('username', refreshedUser.username);
+        localStorage.setItem('token_symbol', refreshedUser.token_symbol);
+      } else {
+        console.warn('⚠️ [REFRESH_USER] Failed to refresh user data');
+      }
+    } catch (error) {
+      console.error('❌ [REFRESH_USER] Error refreshing user:', error);
+    }
+  };
+
+  const contextValue = {
+    user,
+    setUser,
+    signOut,
+    loading,
+    handleWalletConnect,
+    currentWallet,
+    showMemeLaunch,
+    pendingWalletAddress,
+    pendingAuthMethod,
+    refreshUser
+  };
+
+  let content = children;
+
   if (loading) {
-    return (
+    content = (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-gray-900 text-lg">Loading...</div>
       </div>
     );
-  }
-
-  // Show profile setup flow for new users
-  if (showMemeLaunch && pendingWalletAddress) {
+  } else if (showMemeLaunch && pendingWalletAddress) {
     console.log('🚀 [AUTH_PROVIDER] Rendering ProfileSetupFlow for:', pendingWalletAddress);
-    return (
+    content = (
       <ProfileSetupFlow
         walletAddress={pendingWalletAddress}
         skipOnChain={false}
@@ -792,12 +836,9 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
         onCancel={handleMemeLaunchCancel}
       />
     );
-  }
-
-  if (!user) {
-    return (
+  } else if (!user) {
+    content = (
       <>
-        {/* Wallet Picker Modal */}
         <WalletPickerModal
           open={showWalletPicker}
           onClose={() => setShowWalletPicker(false)}
@@ -808,20 +849,17 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
 
         <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
           <div className="w-full max-w-md">
-            {/* Logo/Brand */}
             <div className="text-center mb-12">
               <h1 className="text-4xl tracking-tight text-gray-900 mb-2">Cord</h1>
               <p className="text-sm text-gray-600">Connect your Sui wallet or sign in with Google</p>
             </div>
 
-            {/* Error state */}
             {(error || zkError) && (
               <Alert variant="error" className="mb-6">
                 <AlertDescription>{error || zkError}</AlertDescription>
               </Alert>
             )}
 
-            {/* Waiting state */}
             {(authenticating || zkAuthenticating || zkLoading) && (
               <Alert className="mb-6">
                 <AlertDescription>
@@ -834,7 +872,6 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
               </Alert>
             )}
 
-            {/* Wallet Options */}
             <div className="space-y-3">
               <button
                 onClick={handleWalletConnect}
@@ -881,10 +918,8 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
                   Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in.
                 </div>
               )}
-
             </div>
 
-            {/* Cancel button when authenticating */}
             {authenticating && (
               <Button
                 onClick={() => {
@@ -904,51 +939,9 @@ export const AuthProvider = ({ children, onAuthChange }: { children: any, onAuth
     );
   }
 
-  // Refresh user data from backend
-  const refreshUser = async () => {
-    if (!user?.wallet_address) {
-      console.log('⚠️ [REFRESH_USER] No wallet address to refresh');
-      return;
-    }
-
-    try {
-      console.log('🔄 [REFRESH_USER] Refreshing user data for:', user.wallet_address);
-      const response = await fetch(`${API_BASE_URL}/users/by-address/${user.wallet_address}`);
-      const data = await response.json();
-
-      if (data.success && data.data) {
-        console.log('✅ [REFRESH_USER] User data refreshed');
-        const refreshedUser = {
-          ...data.data,
-          authMethod: user.authMethod,
-          wallet_address: user.wallet_address
-        };
-        setUser(refreshedUser);
-
-        // Update localStorage
-        localStorage.setItem('username', refreshedUser.username);
-        localStorage.setItem('token_symbol', refreshedUser.token_symbol);
-      } else {
-        console.warn('⚠️ [REFRESH_USER] Failed to refresh user data');
-      }
-    } catch (error) {
-      console.error('❌ [REFRESH_USER] Error refreshing user:', error);
-    }
-  };
-
   return (
-    <AuthContext.Provider value={{
-      user,
-      setUser,
-      signOut,
-      loading,
-      handleWalletConnect,
-      currentWallet,
-      showMemeLaunch,
-      pendingWalletAddress,
-      refreshUser
-    }}>
-      {children}
+    <AuthContext.Provider value={contextValue}>
+      {content}
     </AuthContext.Provider>
   );
 };

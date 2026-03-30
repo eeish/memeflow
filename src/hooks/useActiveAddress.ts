@@ -3,7 +3,7 @@ import { useAuth } from '../components/AuthProvider';
 
 export function useActiveAddress() {
   const account = useCurrentAccount();
-  const { user } = useAuth();
+  const { user, pendingWalletAddress } = useAuth();
 
-  return user?.wallet_address || account?.address || null;
+  return user?.wallet_address || pendingWalletAddress || account?.address || null;
 }
