@@ -24,17 +24,9 @@ function AppContent() {
   };
 
   return (
-      <div className="min-h-screen relative overflow-hidden bg-[#F8F9FA]">
-        {/* Light animated background elements */}
-        <div className="fixed inset-0 pointer-events-none">
-          <div className="absolute top-20 left-10 w-32 h-32 rounded-full bg-gradient-to-r from-blue-100/40 to-purple-100/40 blur-xl animate-pulse"></div>
-          <div className="absolute top-40 right-20 w-24 h-24 rounded-full bg-gradient-to-r from-pink-100/40 to-orange-100/40 blur-lg animate-pulse delay-1000"></div>
-          <div className="absolute bottom-32 left-1/4 w-40 h-40 rounded-full bg-gradient-to-r from-green-100/30 to-blue-100/30 blur-2xl animate-pulse delay-2000"></div>
-          <div className="absolute bottom-20 right-1/3 w-28 h-28 rounded-full bg-gradient-to-r from-orange-100/35 to-red-100/35 blur-xl animate-pulse delay-500"></div>
-        </div>
-
-        {/* Light overlay for subtle depth */}
-        <div className="fixed inset-0 bg-gradient-to-br from-gray-50/30 via-white/20 to-gray-100/30 pointer-events-none"></div>
+      <div className="min-h-screen relative overflow-hidden bg-neutral-50">
+        {/* Minimal gradient background */}
+        <div className="fixed inset-0 bg-gradient-to-br from-white via-neutral-50 to-neutral-100 pointer-events-none"></div>
 
         {/* Main Content */}
         <main className="relative z-10 min-h-screen">

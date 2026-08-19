@@ -1,25 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { SocialFeed } from './SocialFeed';
+import { Globe, Heart, MessageCircle, Repeat2, Send, AlertCircle, Flame, Users, Star, Share, TrendingUp } from 'lucide-react';
 import { Card } from './ui/card';
-import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
+import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar';
 import { Textarea } from './ui/textarea';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Alert, AlertDescription } from './ui/alert';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { FollowButton } from './FollowButton';
-import { 
-  Heart, 
-  MessageCircle, 
-  Repeat2, 
-  Share, 
-  TrendingUp,
-  Globe,
-  Send,
-  AlertCircle,
-  Star,
-  Users,
-  Flame
-} from 'lucide-react';
 
 interface PlazaPost {
   id: string;
